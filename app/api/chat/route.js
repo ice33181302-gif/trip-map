@@ -1,8 +1,10 @@
 // POST /api/chat  { trip, originalTrip, messages, message }
 // → { reply, itinerary: { days: [...] } | null }
-// AI에게는 장소를 id로만 알려주고 고르게 합니다. id → 실제 장소 객체(match 등) 치환은
-// 이 파일에서만 하고, 여기서 못 찾은 id는 버립니다(환각 방지).
+// AI는 기존 장소는 id로, 새로 추천하는 장소는 name/regionHint로 알려줍니다.
+// id → 실제 장소 객체 치환과 새 장소 좌표 검색은 이 파일에서만 하고, 못 찾은 id는 버립니다(환각 방지).
+import { randomUUID } from "crypto";
 import { chatItinerary } from "@/lib/llm";
+import { geocodePlace } from "@/lib/geocode";
 
 export const runtime = "nodejs";
 export const maxDuration = 60; // LLM 응답이 길어질 수 있어요 (Vercel 기준 초)
@@ -35,15 +37,38 @@ export async function POST(req) {
       for (const d of trip.days) for (const p of d.places) if (p.id) byId.set(p.id, p);
       for (const d of originalTrip.days) for (const p of d.places) if (p.id && !byId.has(p.id)) byId.set(p.id, p);
 
-      const days = result.itinerary.days
-        .map((d) => ({
-          day: Number(d.day),
-          places: (Array.isArray(d.places) ? d.places : []).map((p) => byId.get(p.id)).filter(Boolean),
-        }))
-        .filter((d) => Number.isFinite(d.day) && d.places.length > 0);
+      // id가 있으면 기존 장소, 없고 name만 있으면 새로 추천한 장소로 봅니다.
+      // 새 장소는 실제로 좌표가 있는지 카카오 검색으로 확인합니다.
+      const resolved = await Promise.all(
+        result.itinerary.days.map(async (d) => {
+          const places = await Promise.all(
+            (Array.isArray(d.places) ? d.places : []).map(async (p) => {
+              if (p.id) return byId.get(p.id) || null;
+              if (p.name?.trim()) {
+                const { match, candidates } = await geocodePlace(
+                  { name: p.name.trim(), regionHint: p.regionHint || "" },
+                  trip.region
+                );
+                return {
+                  id: randomUUID(),
+                  name: p.name.trim(),
+                  regionHint: p.regionHint || "",
+                  time: "",
+                  memo: "",
+                  match,
+                  candidates,
+                };
+              }
+              return null;
+            })
+          );
+          return { day: Number(d.day), places: places.filter(Boolean) };
+        })
+      );
 
+      const days = resolved.filter((d) => Number.isFinite(d.day) && d.places.length > 0);
       const total = days.reduce((n, d) => n + d.places.length, 0);
-      if (total > 0) itinerary = { days }; // 치환 결과가 0개면 null로 두고 답변만 보여줌
+      if (total > 0) itinerary = { days }; // 결과가 0개면 null로 두고 답변만 보여줌
     }
 
     return Response.json({ reply: result.reply, itinerary });

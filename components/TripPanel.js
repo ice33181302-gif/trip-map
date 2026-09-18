@@ -1,6 +1,6 @@
 "use client";
 // 일정 목록 + 지도 + 편집 기능을 한 화면(홈, 공유 링크)에서 공통으로 씁니다.
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { dayColor } from "@/lib/colors";
 
@@ -26,6 +26,16 @@ export default function TripPanel({ trip, originalTrip, onChange, top, actions }
   const [routeLegs, setRouteLegs] = useState({}); // { [day]: legs 배열 } — "실제 경로 보기" 누른 일차만 채워짐
   const [routeLoadingDay, setRouteLoadingDay] = useState(null);
   const [routeError, setRouteError] = useState({});
+  // 모바일에서는 채팅창을 버튼 바로 아래에, 데스크톱에서는 지도 오른쪽 별도 칸에 보여줍니다.
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 800px)");
+    const update = () => setIsMobile(mq.matches);
+    update();
+    mq.addEventListener("change", update);
+    return () => mq.removeEventListener("change", update);
+  }, []);
 
   // 그 일차에 위치가 있는 장소들을 순서대로 이어서 실제 경로를 조회
   async function loadRoute(day) {
@@ -228,6 +238,41 @@ export default function TripPanel({ trip, originalTrip, onChange, top, actions }
     ? trip.days.reduce((n, d) => n + d.places.filter((p) => !p.match).length, 0)
     : 0;
 
+  const chatBody = (
+    <>
+      <div className="chat-panel-head">
+        <h3>AI와 일정 상담하기</h3>
+        <button type="button" className="chat-close" onClick={() => setChatOpen(false)} title="닫기">
+          ✕
+        </button>
+      </div>
+      <div className="chat-log">
+        {chatMessages.length === 0 && (
+          <p className="notice">예: &quot;둘째 날은 좀 여유롭게 바꿔줘&quot;처럼 말해보세요.</p>
+        )}
+        {chatMessages.map((m, i) => (
+          <p key={i} className={`chat-msg ${m.role}`}>
+            {m.text}
+          </p>
+        ))}
+        {chatLoading && <p className="chat-msg assistant">생각하는 중…</p>}
+      </div>
+      {chatError && <p className="error">{chatError}</p>}
+      <form className="chat-form" onSubmit={sendChat}>
+        <input
+          type="text"
+          placeholder="예: 셋째 날은 실내 위주로 바꿔줘"
+          value={chatInput}
+          onChange={(e) => setChatInput(e.target.value)}
+          disabled={chatLoading}
+        />
+        <button type="submit" disabled={chatLoading || !chatInput.trim()}>
+          {chatLoading ? "전송 중…" : "보내기"}
+        </button>
+      </form>
+    </>
+  );
+
   // 원본과 내용이 같으면(아직 아무것도 안 바꿨으면) 비교 탭은 보여줄 필요가 없어요.
   const showViewTabs =
     trip && originalTrip && JSON.stringify(originalTrip.days) !== JSON.stringify(trip.days);
@@ -253,6 +298,8 @@ export default function TripPanel({ trip, originalTrip, onChange, top, actions }
             <button type="button" className="primary chat-toggle" onClick={() => setChatOpen((v) => !v)}>
               {chatOpen ? "AI 상담 닫기" : "AI와 일정 상담하기"}
             </button>
+
+            {isMobile && chatOpen && <div className="chat-panel chat-panel-inline">{chatBody}</div>}
 
             <div className="tabs" role="tablist">
               <button
@@ -494,40 +541,7 @@ export default function TripPanel({ trip, originalTrip, onChange, top, actions }
         />
       </main>
 
-      {trip && chatOpen && (
-        <aside className="chat-panel">
-          <div className="chat-panel-head">
-            <h3>AI와 일정 상담하기</h3>
-            <button type="button" className="chat-close" onClick={() => setChatOpen(false)} title="닫기">
-              ✕
-            </button>
-          </div>
-          <div className="chat-log">
-            {chatMessages.length === 0 && (
-              <p className="notice">예: &quot;둘째 날은 좀 여유롭게 바꿔줘&quot;처럼 말해보세요.</p>
-            )}
-            {chatMessages.map((m, i) => (
-              <p key={i} className={`chat-msg ${m.role}`}>
-                {m.text}
-              </p>
-            ))}
-            {chatLoading && <p className="chat-msg assistant">생각하는 중…</p>}
-          </div>
-          {chatError && <p className="error">{chatError}</p>}
-          <form className="chat-form" onSubmit={sendChat}>
-            <input
-              type="text"
-              placeholder="예: 셋째 날은 실내 위주로 바꿔줘"
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              disabled={chatLoading}
-            />
-            <button type="submit" disabled={chatLoading || !chatInput.trim()}>
-              {chatLoading ? "전송 중…" : "보내기"}
-            </button>
-          </form>
-        </aside>
-      )}
+      {trip && chatOpen && !isMobile && <aside className="chat-panel">{chatBody}</aside>}
     </div>
   );
 }

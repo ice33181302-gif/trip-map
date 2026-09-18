@@ -30,6 +30,8 @@ export default function KakaoMap({ days = [], selectedDay = "all", focusKey = nu
   const mapRef = useRef(null);
   const drawnRef = useRef([]); // 지도에 올린 마커·선 (다시 그릴 때 지우기용)
   const pinsRef = useRef(new Map()); // key → { el, position }
+  const infoRef = useRef(null); // 핀 클릭 시 뜨는 설명 말풍선 (하나만 떠 있음)
+  const infoKeyRef = useRef(null); // 지금 말풍선이 떠 있는 핀의 key
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
   const focusRef = useRef(focusKey);
@@ -81,9 +83,65 @@ export default function KakaoMap({ days = [], selectedDay = "all", focusKey = nu
       drawnRef.current.forEach((obj) => obj.setMap(null));
       drawnRef.current = [];
       pinsRef.current.clear();
+      infoRef.current?.setMap(null);
+      infoRef.current = null;
+      infoKeyRef.current = null;
 
       const bounds = new kakao.maps.LatLngBounds();
       let count = 0;
+
+      // 핀을 누르면 그 장소의 이름·시간·메모·주소를 보여주는 말풍선을 띄웁니다.
+      // 같은 핀을 다시 누르면 닫힙니다.
+      function toggleInfo(position, place, key) {
+        infoRef.current?.setMap(null);
+        infoRef.current = null;
+        if (infoKeyRef.current === key) {
+          infoKeyRef.current = null;
+          return;
+        }
+
+        const box = document.createElement("div");
+        box.className = "place-info";
+
+        const closeBtn = document.createElement("button");
+        closeBtn.type = "button";
+        closeBtn.className = "place-info-close";
+        closeBtn.textContent = "✕";
+        closeBtn.addEventListener("click", (e) => {
+          e.stopPropagation();
+          overlay.setMap(null);
+          infoRef.current = null;
+          infoKeyRef.current = null;
+        });
+        box.appendChild(closeBtn);
+
+        const title = document.createElement("strong");
+        title.textContent = place.name;
+        box.appendChild(title);
+
+        const sub = [place.time, place.memo].filter(Boolean).join(" · ");
+        if (sub) {
+          const p = document.createElement("p");
+          p.textContent = sub;
+          box.appendChild(p);
+        }
+        if (place.match?.address) {
+          const addr = document.createElement("p");
+          addr.className = "place-info-addr";
+          addr.textContent = place.match.address;
+          box.appendChild(addr);
+        }
+
+        const overlay = new kakao.maps.CustomOverlay({
+          position,
+          content: box,
+          yAnchor: 1.3,
+          zIndex: 10,
+        });
+        overlay.setMap(map);
+        infoRef.current = overlay;
+        infoKeyRef.current = key;
+      }
 
       const visible = days.filter((d) => selectedDay === "all" || d.day === selectedDay);
       visible.forEach((d) => {
@@ -106,7 +164,10 @@ export default function KakaoMap({ days = [], selectedDay = "all", focusKey = nu
           el.textContent = String(i + 1);
           el.title = `${d.day}일차 ${i + 1}. ${p.name}`;
           if (key === focusRef.current) el.classList.add("active");
-          el.addEventListener("click", () => onSelectRef.current?.(key));
+          el.addEventListener("click", () => {
+            onSelectRef.current?.(key);
+            toggleInfo(position, p, key);
+          });
 
           const overlay = new kakao.maps.CustomOverlay({ position, content: el, yAnchor: 0.5 });
           overlay.setMap(map);
