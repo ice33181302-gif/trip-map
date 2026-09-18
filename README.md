@@ -12,7 +12,7 @@
 
 1. 카카오 개발자 콘솔에서 애플리케이션을 만듭니다.
 2. **앱 키**에서 `REST API 키`와 `JavaScript 키`를 복사해 둡니다.
-3. **플랫폼 > Web**에 사이트 도메인 `http://localhost:3000`을 등록합니다. (배포하면 실제 도메인도 추가)
+3. **[앱] > [플랫폼 키] > JavaScript 키 > [JavaScript SDK 도메인]**에 사이트 도메인 `http://localhost:3000`을 등록합니다. (배포하면 실제 도메인도 추가)
 4. 콘솔의 **카카오맵** 메뉴에서 사용 설정을 켭니다. (꺼져 있으면 지도가 뜨지 않아요)
 
 ## 3. 실행
@@ -30,12 +30,20 @@ npm run dev
 
 | 파일 | 하는 일 |
 | --- | --- |
-| `app/page.js` | 화면: 주소 입력, 일차 탭, 장소 목록 |
+| `app/page.js` | 화면: 주소 입력, 붙여넣기, 저장/공유 |
+| `app/trip/[id]/page.js` | 공유 링크로 들어왔을 때 저장된 일정 보기·편집 |
+| `components/TripPanel.js` | 일차 탭, 장소 목록, 후보 선택, 경로 조회 등 편집 UI (홈·공유 화면 공통) |
 | `components/KakaoMap.js` | 카카오맵 표시, 핀과 경로선 그리기 (브라우저 전용) |
 | `app/api/extract/route.js` | 서버 API: 본문 가져오기 → AI 추출 → 좌표 찾기 |
+| `app/api/search-place/route.js` | 위치를 못 찾은 장소를 직접 검색어로 찾기 |
+| `app/api/route/route.js` | 한 일차의 실제 이동 경로(도보/대중교통) 조회 |
+| `app/api/trips/route.js` | 일정 저장 (공유용 id 발급) |
+| `app/api/trips/[id]/route.js` | 저장된 일정 불러오기·수정 |
 | `lib/fetchContent.js` | 네이버 블로그·일반 웹페이지 본문 추출 |
 | `lib/llm.js` | Gemini에게 일정 JSON을 뽑아달라고 요청 |
 | `lib/geocode.js` | 카카오 장소 검색으로 좌표 찾기 |
+| `lib/route.js` | 카카오모빌리티 길찾기 API 호출, 구간별 캐싱 |
+| `lib/db.js` | SQLite 연결, 일정 저장·조회 |
 | `lib/colors.js` | 일차별 색상 |
 
 ## 5. 알아두면 좋은 점

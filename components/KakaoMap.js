@@ -125,7 +125,7 @@ export default function KakaoMap({ days = [], selectedDay = "all", focusKey = nu
       } else if (count > 1) {
         map.setBounds(bounds, 60, 60, 60, 60);
       }
-    });
+    }).catch(() => {});
     return () => {
       cancelled = true;
     };

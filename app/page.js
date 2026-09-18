@@ -12,6 +12,9 @@ export default function Home() {
   const [saving, setSaving] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
   const [saveError, setSaveError] = useState("");
+  // TripPanel의 key로 사용. 값이 바뀌면 리액트가 TripPanel을 통째로 새로 만들어서
+  // routeLegs, selectedDay, focusKey 같은 내부 상태가 초기화됩니다.
+  const [tripVersion, setTripVersion] = useState(0);
 
   // 입력값과 지금까지 만든 결과를 모두 지우고 처음 상태로 되돌립니다.
   function handleClear() {
@@ -22,6 +25,7 @@ export default function Home() {
     setTrip(null);
     setShareUrl("");
     setSaveError("");
+    setTripVersion((v) => v + 1);
   }
 
   async function handleSubmit(e) {
@@ -46,6 +50,7 @@ export default function Home() {
       }
       setTrip(data);
       setShareUrl("");
+      setTripVersion((v) => v + 1);
     } catch {
       setError("서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.");
     } finally {
@@ -142,5 +147,13 @@ export default function Home() {
     </div>
   );
 
-  return <TripPanel trip={trip} onChange={setTrip} top={top} actions={trip && actions} />;
+  return (
+    <TripPanel
+      key={tripVersion}
+      trip={trip}
+      onChange={setTrip}
+      top={top}
+      actions={trip && actions}
+    />
+  );
 }
