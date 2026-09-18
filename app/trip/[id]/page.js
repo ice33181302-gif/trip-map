@@ -4,9 +4,18 @@ import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import TripPanel from "@/components/TripPanel";
 
+// 옛날에 저장된 일정은 장소에 id가 없을 수 있어서, 불러올 때 채워 넣습니다.
+function withIds(days) {
+  return days.map((d) => ({
+    ...d,
+    places: d.places.map((p) => (p.id ? p : { ...p, id: crypto.randomUUID() })),
+  }));
+}
+
 export default function SharedTripPage() {
   const { id } = useParams();
   const [trip, setTrip] = useState(null);
+  const [originalTrip, setOriginalTrip] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -21,7 +30,11 @@ export default function SharedTripPage() {
           setLoadError(data.error || "불러오지 못했어요.");
           return;
         }
-        setTrip(data);
+        const { originalDays, ...tripData } = data;
+        const days = withIds(tripData.days);
+        setTrip({ ...tripData, days });
+        // originalDays가 없는 옛날 저장본은 현재 일정을 원본으로 취급합니다(비교 탭은 안 보임).
+        setOriginalTrip({ ...tripData, days: withIds(originalDays || tripData.days) });
       })
       .catch(() => setLoadError("서버에 연결하지 못했어요."))
       .finally(() => setLoading(false));
@@ -35,7 +48,7 @@ export default function SharedTripPage() {
       const res = await fetch(`/api/trips/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(trip),
+        body: JSON.stringify({ ...trip, originalDays: (originalTrip || trip).days }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -89,5 +102,13 @@ export default function SharedTripPage() {
     </div>
   );
 
-  return <TripPanel trip={trip} onChange={setTrip} top={top} actions={actions} />;
+  return (
+    <TripPanel
+      trip={trip}
+      originalTrip={originalTrip}
+      onChange={setTrip}
+      top={top}
+      actions={actions}
+    />
+  );
 }

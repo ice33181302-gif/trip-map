@@ -1,5 +1,6 @@
 // POST /api/extract  { url?: string, text?: string }
 // → { title, region, sourceUrl, days: [{ day, places: [{ name, time, memo, match, candidates }] }] }
+import { randomUUID } from "crypto";
 import { fetchContent } from "@/lib/fetchContent";
 import { extractItinerary } from "@/lib/llm";
 import { geocodePlace } from "@/lib/geocode";
@@ -45,7 +46,7 @@ export async function POST(req) {
       itinerary.days.map(async (d) => ({
         day: d.day,
         places: await Promise.all(
-          d.places.map(async (p) => ({ ...p, ...(await geocodePlace(p, itinerary.region)) }))
+          d.places.map(async (p) => ({ id: randomUUID(), ...p, ...(await geocodePlace(p, itinerary.region)) }))
         ),
       }))
     );

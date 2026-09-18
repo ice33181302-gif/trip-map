@@ -8,8 +8,15 @@ const KakaoMap = dynamic(() => import("@/components/KakaoMap"), { ssr: false });
 
 // top: 패널 맨 위에 넣을 내용 (홈은 주소 입력 폼, 공유 화면은 안내 문구 등)
 // actions: 일정 제목 옆에 넣을 버튼 (저장하기 등)
-export default function TripPanel({ trip, onChange, top, actions }) {
+// originalTrip: 변환 직후 원본 스냅샷. "원본 일정" 지도 보기와 AI 채팅이 고를 수 있는 장소 범위로 씀
+export default function TripPanel({ trip, originalTrip, onChange, top, actions }) {
   const [selectedDay, setSelectedDay] = useState("all");
+  const [mapView, setMapView] = useState("current"); // "current" | "original" — 지도에 어느 일정을 보여줄지
+  const [chatOpen, setChatOpen] = useState(false); // 버튼을 눌러야 채팅 패널이 나타남
+  const [chatMessages, setChatMessages] = useState([]);
+  const [chatInput, setChatInput] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
+  const [chatError, setChatError] = useState("");
   const [focusKey, setFocusKey] = useState(null);
   const [pickerKey, setPickerKey] = useState(null); // 후보 목록/검색창을 열어둔 장소 (day-index)
   const [searchText, setSearchText] = useState("");
@@ -131,7 +138,15 @@ export default function TripPanel({ trip, onChange, top, actions }) {
             ...d,
             places: [
               ...d.places,
-              { name: candidate.name, regionHint: "", time: "", memo: "", match: candidate, candidates: [candidate] },
+              {
+                id: crypto.randomUUID(),
+                name: candidate.name,
+                regionHint: "",
+                time: "",
+                memo: "",
+                match: candidate,
+                candidates: [candidate],
+              },
             ],
           }
     );
@@ -165,6 +180,47 @@ export default function TripPanel({ trip, onChange, top, actions }) {
     }
   }
 
+  // AI와 대화하며 일정을 조정합니다. id 치환은 서버(app/api/chat)에서만 하고,
+  // 여기서는 받은 itinerary를 그대로 반영합니다.
+  async function sendChat(e) {
+    e.preventDefault();
+    const text = chatInput.trim();
+    if (!text || chatLoading) return;
+    const history = chatMessages.slice(-6); // API에는 최근 6개까지만 보냅니다
+    setChatMessages((m) => [...m, { role: "user", text }]);
+    setChatInput("");
+    setChatLoading(true);
+    setChatError("");
+    try {
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ trip, originalTrip: originalTrip || trip, messages: history, message: text }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setChatError(data.error || "답변을 받지 못했어요.");
+        return;
+      }
+      setChatMessages((m) => [...m, { role: "assistant", text: data.reply }]);
+      if (data.itinerary) {
+        const newDays = data.itinerary.days;
+        // 바뀐 일차의 실제 경로는 더 이상 안 맞으니 지웁니다.
+        const dayNums = new Set([...trip.days.map((d) => d.day), ...newDays.map((d) => d.day)]);
+        dayNums.forEach((day) => {
+          const oldIds = (trip.days.find((d) => d.day === day)?.places || []).map((p) => p.id).join(",");
+          const newIds = (newDays.find((d) => d.day === day)?.places || []).map((p) => p.id).join(",");
+          if (oldIds !== newIds) clearRoute(day);
+        });
+        onChange({ ...trip, days: newDays });
+      }
+    } catch {
+      setChatError("서버에 연결하지 못했어요.");
+    } finally {
+      setChatLoading(false);
+    }
+  }
+
   const visibleDays = trip
     ? trip.days.filter((d) => selectedDay === "all" || d.day === selectedDay)
     : [];
@@ -172,8 +228,13 @@ export default function TripPanel({ trip, onChange, top, actions }) {
     ? trip.days.reduce((n, d) => n + d.places.filter((p) => !p.match).length, 0)
     : 0;
 
+  // 원본과 내용이 같으면(아직 아무것도 안 바꿨으면) 비교 탭은 보여줄 필요가 없어요.
+  const showViewTabs =
+    trip && originalTrip && JSON.stringify(originalTrip.days) !== JSON.stringify(trip.days);
+  const mapDays = (showViewTabs && mapView === "original" ? originalTrip : trip)?.days || [];
+
   return (
-    <div className="shell">
+    <div className={`shell ${trip && chatOpen ? "chat-open" : ""}`}>
       <aside className="panel">
         {top}
 
@@ -188,6 +249,10 @@ export default function TripPanel({ trip, onChange, top, actions }) {
                 {actions}
               </div>
             </div>
+
+            <button type="button" className="primary chat-toggle" onClick={() => setChatOpen((v) => !v)}>
+              {chatOpen ? "AI 상담 닫기" : "AI와 일정 상담하기"}
+            </button>
 
             <div className="tabs" role="tablist">
               <button
@@ -402,14 +467,67 @@ export default function TripPanel({ trip, onChange, top, actions }) {
       </aside>
 
       <main className="map-wrap">
+        {showViewTabs && (
+          <div className="view-tabs">
+            <button
+              type="button"
+              className={`view-tab ${mapView === "current" ? "active" : ""}`}
+              onClick={() => setMapView("current")}
+            >
+              내 일정
+            </button>
+            <button
+              type="button"
+              className={`view-tab ${mapView === "original" ? "active" : ""}`}
+              onClick={() => setMapView("original")}
+            >
+              원본 일정
+            </button>
+          </div>
+        )}
         <KakaoMap
-          days={trip?.days || []}
+          days={mapDays}
           selectedDay={selectedDay}
           focusKey={focusKey}
           onSelect={setFocusKey}
           routeLegs={routeLegs}
         />
       </main>
+
+      {trip && chatOpen && (
+        <aside className="chat-panel">
+          <div className="chat-panel-head">
+            <h3>AI와 일정 상담하기</h3>
+            <button type="button" className="chat-close" onClick={() => setChatOpen(false)} title="닫기">
+              ✕
+            </button>
+          </div>
+          <div className="chat-log">
+            {chatMessages.length === 0 && (
+              <p className="notice">예: &quot;둘째 날은 좀 여유롭게 바꿔줘&quot;처럼 말해보세요.</p>
+            )}
+            {chatMessages.map((m, i) => (
+              <p key={i} className={`chat-msg ${m.role}`}>
+                {m.text}
+              </p>
+            ))}
+            {chatLoading && <p className="chat-msg assistant">생각하는 중…</p>}
+          </div>
+          {chatError && <p className="error">{chatError}</p>}
+          <form className="chat-form" onSubmit={sendChat}>
+            <input
+              type="text"
+              placeholder="예: 셋째 날은 실내 위주로 바꿔줘"
+              value={chatInput}
+              onChange={(e) => setChatInput(e.target.value)}
+              disabled={chatLoading}
+            />
+            <button type="submit" disabled={chatLoading || !chatInput.trim()}>
+              {chatLoading ? "전송 중…" : "보내기"}
+            </button>
+          </form>
+        </aside>
+      )}
     </div>
   );
 }

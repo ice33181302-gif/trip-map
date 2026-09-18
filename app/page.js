@@ -9,6 +9,7 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [trip, setTrip] = useState(null);
+  const [originalTrip, setOriginalTrip] = useState(null); // 변환 직후 스냅샷. AI 채팅이 고를 수 있는 장소 범위이자, "원본 일정" 지도 보기용
   const [saving, setSaving] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
   const [saveError, setSaveError] = useState("");
@@ -23,6 +24,7 @@ export default function Home() {
     setShowText(false);
     setError("");
     setTrip(null);
+    setOriginalTrip(null);
     setShareUrl("");
     setSaveError("");
     setTripVersion((v) => v + 1);
@@ -49,6 +51,7 @@ export default function Home() {
         return;
       }
       setTrip(data);
+      setOriginalTrip(data);
       setShareUrl("");
       setTripVersion((v) => v + 1);
     } catch {
@@ -66,7 +69,7 @@ export default function Home() {
       const res = await fetch("/api/trips", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(trip),
+        body: JSON.stringify({ ...trip, originalDays: (originalTrip || trip).days }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -151,6 +154,7 @@ export default function Home() {
     <TripPanel
       key={tripVersion}
       trip={trip}
+      originalTrip={originalTrip}
       onChange={setTrip}
       top={top}
       actions={trip && actions}

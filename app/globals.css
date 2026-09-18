@@ -26,8 +26,9 @@ button, input, textarea { font: inherit; color: inherit; }
   clip: rect(0 0 0 0); white-space: nowrap;
 }
 
-/* 레이아웃: 왼쪽 일정, 오른쪽 지도 */
-.shell { display: grid; grid-template-columns: 400px 1fr; height: 100vh; }
+/* 레이아웃: 왼쪽 일정, 가운데 지도. AI 채팅을 열면 오른쪽에 세 번째 칸이 생김 */
+.shell { display: grid; grid-template-columns: 380px 1fr; height: 100vh; }
+.shell.chat-open { grid-template-columns: 380px 1fr 360px; }
 .panel {
   background: var(--paper);
   border-right: 1px solid var(--line);
@@ -77,6 +78,7 @@ button, input, textarea { font: inherit; color: inherit; }
 .trip-head h2 { margin: 0; font-size: 19px; letter-spacing: -0.01em; }
 .trip-head a { color: var(--muted); font-size: 14px; white-space: nowrap; }
 .trip-head-actions { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.chat-toggle { display: block; margin-top: 14px; }
 
 /* 저장하고 공유 링크 만들기 */
 .save-box { text-align: right; }
@@ -180,6 +182,50 @@ button, input, textarea { font: inherit; color: inherit; }
 }
 .add-place-toggle:hover { color: var(--ink); border-color: var(--muted); }
 
+/* AI 채팅 (지도 오른쪽 패널) */
+.chat-panel {
+  background: var(--paper);
+  border-left: 1px solid var(--line);
+  display: flex;
+  flex-direction: column;
+  padding: 28px 20px 20px;
+  min-height: 0; /* flex 자식이 넘칠 때 스크롤되도록 */
+}
+.chat-panel-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+.chat-panel-head h3 { margin: 0; font-size: 15px; }
+.chat-close {
+  border: 0; background: none; color: var(--muted); font-size: 14px; line-height: 1; cursor: pointer; padding: 4px;
+}
+.chat-close:hover { color: var(--ink); }
+.chat-log { flex: 1; display: grid; align-content: start; gap: 6px; overflow-y: auto; }
+.chat-msg {
+  margin: 0; padding: 7px 10px; border-radius: 10px; font-size: 13px; line-height: 1.5;
+  max-width: 90%; word-break: break-word;
+}
+.chat-msg.user { justify-self: end; background: var(--ink); color: #fff; }
+.chat-msg.assistant { justify-self: start; background: var(--land); }
+.chat-form { display: flex; gap: 6px; margin-top: 10px; }
+.chat-form input {
+  flex: 1; min-width: 0; border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; background: var(--paper);
+}
+.chat-form button {
+  flex: none; border: 0; border-radius: 8px; padding: 7px 14px;
+  background: var(--ink); color: #fff; cursor: pointer;
+}
+.chat-form button:disabled { opacity: 0.6; cursor: progress; }
+
+/* 지도 위 "원본 일정 / 내 일정" 전환 탭 */
+.view-tabs {
+  position: absolute; top: 14px; left: 14px; z-index: 1;
+  display: flex; gap: 4px; background: var(--paper); border: 1px solid var(--line);
+  border-radius: 999px; padding: 3px; box-shadow: 0 1px 6px rgba(28, 35, 33, 0.15);
+}
+.view-tab {
+  border: 0; background: none; border-radius: 999px; padding: 6px 12px;
+  font-size: 13px; color: var(--muted); cursor: pointer;
+}
+.view-tab.active { background: var(--ink); color: #fff; }
+
 /* 지도 위 핀 (카카오맵 CustomOverlay에 들어가는 요소) */
 .pin {
   width: 28px; height: 28px; border-radius: 50%;
@@ -191,8 +237,16 @@ button, input, textarea { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) { .pin { transition: none; } }
 
 /* 모바일: 지도 위, 일정 아래 */
+/* 노트북 정도 폭에서는 지도가 너무 좁아지지 않게 양옆 패널을 줄입니다 */
+@media (max-width: 1200px) {
+  .shell { grid-template-columns: 320px 1fr; }
+  .shell.chat-open { grid-template-columns: 320px 1fr 300px; }
+}
+
 @media (max-width: 800px) {
-  .shell { grid-template-columns: 1fr; grid-template-rows: 50vh auto; height: auto; }
+  .shell, .shell.chat-open { grid-template-columns: 1fr; grid-template-rows: 50vh auto auto; height: auto; }
   .map-wrap { order: -1; height: 50vh; position: sticky; top: 0; z-index: 1; }
   .panel { border-right: 0; border-top: 1px solid var(--line); overflow: visible; }
+  .chat-panel { border-left: 0; border-top: 1px solid var(--line); }
+  .chat-log { max-height: 260px; }
 }

@@ -56,6 +56,21 @@ export default function KakaoMap({ days = [], selectedDay = "all", focusKey = nu
     };
   }, []);
 
+  // 창 크기가 바뀌거나(반응형 레이아웃 포함) 지도 영역 크기 자체가 바뀌면
+  // 카카오맵이 스스로 알아채지 못해서 relayout()을 직접 불러줘야 합니다.
+  useEffect(() => {
+    if (!containerRef.current) return;
+    const observer = new ResizeObserver(() => {
+      const map = mapRef.current;
+      if (!map) return;
+      const center = map.getCenter(); // relayout 하면 중심이 흐트러질 수 있어 미리 저장
+      map.relayout();
+      map.setCenter(center);
+    });
+    observer.observe(containerRef.current);
+    return () => observer.disconnect();
+  }, []);
+
   // 2) 일정이 바뀌면 마커와 경로를 다시 그리기
   useEffect(() => {
     let cancelled = false;
