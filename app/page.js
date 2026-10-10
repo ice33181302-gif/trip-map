@@ -33,7 +33,7 @@ export default function Home() {
   const [originalTrip, setOriginalTrip] = useState(null); // 여행기가 하나일 때 변환 직후 스냅샷. "원본 일정" 지도 보기용
   const [pool, setPool] = useState(null); // 장소 모음 (lib/pool.js). AI 채팅이 고를 수 있는 장소 범위
   const [saving, setSaving] = useState(false);
-  const [shareUrl, setShareUrl] = useState("");
+  const [shareLinks, setShareLinks] = useState(null); // 저장 후 { view, edit } 링크
   const [saveError, setSaveError] = useState("");
   // TripPanel의 key로 사용. 값이 바뀌면 리액트가 TripPanel을 통째로 새로 만들어서
   // routeLegs, selectedDay, focusKey 같은 내부 상태가 초기화됩니다.
@@ -49,7 +49,7 @@ export default function Home() {
     setTrip(null);
     setOriginalTrip(null);
     setPool(null);
-    setShareUrl("");
+    setShareLinks(null);
     setSaveError("");
     setTripVersion((v) => v + 1);
   }
@@ -71,7 +71,7 @@ export default function Home() {
     setTrip(data);
     setOriginalTrip(data);
     setPool(buildPool([data]));
-    setShareUrl("");
+    setShareLinks(null);
     setTripVersion((v) => v + 1);
   }
 
@@ -133,7 +133,7 @@ export default function Home() {
       sourceUrl: null,
       days: [],
     });
-    setShareUrl("");
+    setShareLinks(null);
     setTripVersion((v) => v + 1);
   }
 
@@ -152,7 +152,8 @@ export default function Home() {
         setSaveError(data.error || "저장하지 못했어요.");
         return;
       }
-      setShareUrl(`${window.location.origin}/trip/${data.id}`);
+      const base = `${window.location.origin}/trip/${data.id}`;
+      setShareLinks({ view: base, edit: `${base}?edit=${data.editToken}` });
     } catch {
       setSaveError("서버에 연결하지 못했어요.");
     } finally {
@@ -248,10 +249,17 @@ export default function Home() {
       <button type="button" className="btn" onClick={handleSave} disabled={saving}>
         {saving ? "저장 중…" : "저장하고 공유 링크 만들기"}
       </button>
-      {shareUrl && (
-        <p className="share-url">
-          <a href={shareUrl}>{shareUrl}</a>
-        </p>
+      {shareLinks && (
+        <div className="share-links">
+          <p className="share-url">
+            <span>보기용 (다른 사람에게 보내세요)</span>
+            <a href={shareLinks.view}>{shareLinks.view}</a>
+          </p>
+          <p className="share-url">
+            <span>편집용 (나만 보관하세요. 이 링크가 있으면 누구나 수정할 수 있어요)</span>
+            <a href={shareLinks.edit}>{shareLinks.edit}</a>
+          </p>
+        </div>
       )}
       {saveError && <p className="error">{saveError}</p>}
     </div>

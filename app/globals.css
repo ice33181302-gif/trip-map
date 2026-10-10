@@ -121,6 +121,13 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .save-box { display: contents; }
 .share-url, .save-box .error { flex-basis: 100%; margin: 2px 0 0; font-size: 12px; }
 .share-url a { color: var(--focus); word-break: break-all; }
+.share-links { flex-basis: 100%; display: grid; gap: 6px; margin-top: 4px; }
+.share-links .share-url { display: grid; gap: 1px; margin: 0; }
+.share-links .share-url span { color: var(--muted); }
+.readonly-badge {
+  display: inline-block; padding: 3px 10px; border-radius: 999px;
+  background: var(--land); color: var(--muted); font-size: 12px;
+}
 
 /* 일차 탭 + 편집 버튼 */
 .list-toolbar {
@@ -169,6 +176,9 @@ button, input, textarea, select { font: inherit; color: inherit; }
 .addr, .memo { font-size: 13px; line-height: 1.45; color: var(--muted); }
 .memo { color: var(--ink); opacity: 0.75; }
 .unmatched .addr { color: var(--warn-ink); }
+
+/* 다음 장소까지 이동 시간·거리 (세로 선 옆에 작게) */
+.leg { margin: 0 0 4px 42px; font-size: 12px; color: var(--muted); }
 
 /* 장소 행 + "다른 장소/직접 검색" 버튼 */
 .stop-row { display: flex; align-items: center; gap: 6px; }
@@ -264,9 +274,16 @@ button, input, textarea, select { font: inherit; color: inherit; }
   margin: 0; padding: 8px 11px; border-radius: 12px; font-size: 13px; line-height: 1.55;
   max-width: 90%; word-break: break-word; white-space: pre-wrap;
 }
+.chat-item { display: grid; gap: 4px; }
 .chat-msg.user { justify-self: end; background: var(--ink); color: #fff; border-bottom-right-radius: 4px; }
 .chat-msg.assistant { justify-self: start; background: var(--land); border-bottom-left-radius: 4px; }
 .chat-error { margin-top: 8px; font-size: 13px; }
+.chat-undo {
+  justify-self: start; border: 1px solid var(--line-strong); background: var(--paper); color: var(--ink);
+  border-radius: 999px; padding: 2px 10px; font-size: 12px; cursor: pointer;
+}
+.chat-undo:hover { background: var(--soft); border-color: var(--muted); }
+.chat-undone { justify-self: start; font-size: 12px; color: var(--muted); }
 
 /* 답변을 기다리는 동안 점 세 개가 차례로 튀어요 */
 .typing { display: flex; gap: 4px; padding: 11px 12px; }

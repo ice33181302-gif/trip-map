@@ -8,11 +8,38 @@ import PlacePool from "@/components/PlacePool";
 
 const KakaoMap = dynamic(() => import("@/components/KakaoMap"), { ssr: false });
 
+// 실제 경로 조회 결과(legs)를 "몇 번째 장소 다음 구간인지"로 바꿉니다. → { [장소 순번]: leg | null }
+// legs는 위치를 찾은 장소끼리만 이은 구간이라, 위치 없는 장소를 건너뛰며 짝을 맞춰요.
+function legsByPlaceIndex(places, legs) {
+  const result = {};
+  if (!legs) return result;
+  const matched = [];
+  places.forEach((p, i) => {
+    if (p.match) matched.push(i);
+  });
+  for (let j = 0; j < matched.length - 1; j++) result[matched[j]] = legs[j] || null;
+  return result;
+}
+
+// 경로 API는 시간을 초, 거리를 미터로 줘요.
+function formatDuration(sec) {
+  const min = Math.max(1, Math.round(sec / 60));
+  if (min < 60) return `${min}분`;
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return m ? `${h}시간 ${m}분` : `${h}시간`;
+}
+
+function formatDistance(meters) {
+  return meters < 1000 ? `${Math.round(meters)}m` : `${(meters / 1000).toFixed(1)}km`;
+}
+
 // top: 패널 맨 위에 넣을 내용 (홈은 주소 입력 폼, 공유 화면은 안내 문구 등)
 // actions: 일정 제목 옆에 넣을 버튼 (저장하기 등)
 // originalTrip: 변환 직후 원본 스냅샷. 여행기가 하나일 때 "원본 일정" 지도 보기에 씀
 // pool: 장소 모음 (lib/pool.js). AI 채팅이 고를 수 있는 장소 범위이고, 여행기가 여러 개면 "장소 모음" 보기에 씀
-export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolChange, top, actions }) {
+// readOnly: 보기용 공유 링크. 편집·AI 상담 버튼을 숨기고 보기만 합니다.
+export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolChange, top, actions, readOnly = false }) {
   const isMulti = Boolean(pool && pool.sources.length > 1); // 여행기 여러 개를 합친 경우
   const [selectedDay, setSelectedDay] = useState("all");
   // "current" | "original" | "pool" — 어느 보기를 보여줄지.
@@ -226,7 +253,8 @@ export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolCh
     if (e) e.preventDefault();
     const text = (presetText || chatInput).trim();
     if (!text || chatLoading) return;
-    const history = chatMessages.slice(-6); // API에는 최근 6개까지만 보냅니다
+    // API에는 최근 6개까지만, 역할과 글자만 보냅니다 (되돌리기용 일정 데이터는 빼고)
+    const history = chatMessages.slice(-6).map((m) => ({ role: m.role, text: m.text }));
     setChatMessages((m) => [...m, { role: "user", text }]);
     setChatInput("");
     setChatLoading(true);
@@ -242,25 +270,50 @@ export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolCh
         setChatError(data.error || "답변을 받지 못했어요.");
         return;
       }
-      setChatMessages((m) => [...m, { role: "assistant", text: data.reply }]);
       if (data.itinerary) {
         const newDays = data.itinerary.days;
-        // 바뀐 일차의 실제 경로는 더 이상 안 맞으니 지웁니다.
-        const dayNums = new Set([...trip.days.map((d) => d.day), ...newDays.map((d) => d.day)]);
-        dayNums.forEach((day) => {
-          const oldIds = (trip.days.find((d) => d.day === day)?.places || []).map((p) => p.id).join(",");
-          const newIds = (newDays.find((d) => d.day === day)?.places || []).map((p) => p.id).join(",");
-          if (oldIds !== newIds) clearRoute(day);
-        });
-        changeTrip({ ...trip, days: newDays });
+        // 되돌리기용으로 바뀌기 전 일정(prevDays)과 바뀐 뒤 일정(newDays)을 답변 메시지에 같이 기억해 둡니다.
+        setChatMessages((m) => [...m, { role: "assistant", text: data.reply, prevDays: trip.days, newDays }]);
+        applyDays(newDays);
         // 장소 모음을 보고 있었다면, 새로 만든 내 일정을 바로 보여줍니다(핀 색은 일차별).
         if (mapView === "pool") switchView("current");
+      } else {
+        setChatMessages((m) => [...m, { role: "assistant", text: data.reply }]);
       }
     } catch {
       setChatError("서버에 연결하지 못했어요.");
     } finally {
       setChatLoading(false);
     }
+  }
+
+  // 일정을 통째로 바꿉니다(AI 변경, 되돌리기). 바뀐 일차의 실제 경로는 더 이상 안 맞으니 지워요.
+  function applyDays(newDays) {
+    const dayNums = new Set([...trip.days.map((d) => d.day), ...newDays.map((d) => d.day)]);
+    dayNums.forEach((day) => {
+      const oldIds = (trip.days.find((d) => d.day === day)?.places || []).map((p) => p.id).join(",");
+      const newIds = (newDays.find((d) => d.day === day)?.places || []).map((p) => p.id).join(",");
+      if (oldIds !== newIds) clearRoute(day);
+    });
+    changeTrip({ ...trip, days: newDays });
+  }
+
+  // AI가 바꾸기 전 일정으로 돌아갑니다.
+  function undoChat(index) {
+    applyDays(chatMessages[index].prevDays);
+    setChatMessages((list) => list.map((m, i) => (i === index ? { ...m, undone: true } : m)));
+  }
+
+  // 되돌리기 버튼은 "가장 최근 AI 변경"에만, 그리고 그 뒤로 일정이 안 바뀌었을 때만 보여줍니다.
+  // 사용자가 그 뒤에 직접 편집했다면 되돌리면 그 편집까지 사라지니까요.
+  // (trip.days === m.newDays는 내용 비교가 아니라 "같은 배열인지" 비교예요. 편집하면 새 배열이 만들어져서 달라져요.)
+  let undoIndex = -1;
+  chatMessages.forEach((m, i) => {
+    if (m.newDays) undoIndex = i;
+  });
+  if (undoIndex >= 0) {
+    const last = chatMessages[undoIndex];
+    if (last.undone || !trip || trip.days !== last.newDays) undoIndex = -1;
   }
 
   // 장소 모음 보기에서는 일차 목록 대신 PlacePool을 보여주니 비워 둡니다.
@@ -295,9 +348,15 @@ export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolCh
           </p>
         )}
         {chatMessages.map((m, i) => (
-          <p key={i} className={`chat-msg ${m.role}`}>
-            {m.text}
-          </p>
+          <div key={i} className={`chat-item ${m.role}`}>
+            <p className={`chat-msg ${m.role}`}>{m.text}</p>
+            {i === undoIndex && (
+              <button type="button" className="chat-undo" onClick={() => undoChat(i)}>
+                되돌리기
+              </button>
+            )}
+            {m.undone && <span className="chat-undone">바꾸기 전 일정으로 되돌렸어요</span>}
+          </div>
         ))}
         {chatLoading && (
           <p className="chat-msg assistant typing" aria-label="답변을 만드는 중">
@@ -394,14 +453,16 @@ export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolCh
                     </button>
                   ))}
                 </div>
-                <button
-                  type="button"
-                  className={`btn edit-toggle ${editing ? "on" : ""}`}
-                  aria-pressed={editing}
-                  onClick={toggleEditing}
-                >
-                  {editing ? "편집 완료" : "편집"}
-                </button>
+                {!readOnly && (
+                  <button
+                    type="button"
+                    className={`btn edit-toggle ${editing ? "on" : ""}`}
+                    aria-pressed={editing}
+                    onClick={toggleEditing}
+                  >
+                    {editing ? "편집 완료" : "편집"}
+                  </button>
+                )}
               </div>
             )}
 
@@ -409,196 +470,212 @@ export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolCh
               <p className="notice-box">위치를 찾지 못한 장소가 {missing}곳 있어요. 지도에는 빠져 있어요.</p>
             )}
 
-            {visibleDays.map((d) => (
-              <div key={d.day} className="day" style={{ "--c": dayColor(d.day) }}>
-                <div className="day-head">
-                  <h3>
-                    {d.day}일차 <span className="day-count">{d.places.length}곳</span>
-                  </h3>
-                  <button
-                    type="button"
-                    className="btn route-toggle"
-                    onClick={() => loadRoute(d.day)}
-                    disabled={routeLoadingDay === d.day || d.places.filter((p) => p.match).length < 2}
-                  >
-                    {routeLoadingDay === d.day
-                      ? "경로 찾는 중…"
-                      : routeLegs[d.day]
-                      ? "다시 조회"
-                      : "실제 경로 보기"}
-                  </button>
-                </div>
-                {routeError[d.day] && <p className="notice">{routeError[d.day]}</p>}
-                <ol className="stops">
-                  {d.places.map((p, i) => {
-                    const key = `${d.day}-${i}`;
-                    const pickerOpen = pickerKey === key;
-                    return (
-                      <li key={key} className={p.match ? "" : "unmatched"}>
-                        <div className="stop-row">
-                          <button
-                            type="button"
-                            className={`stop ${focusKey === key ? "active" : ""}`}
-                            onClick={() => p.match && setFocusKey(key)}
-                            disabled={!p.match}
-                          >
-                            <span className="num">{i + 1}</span>
-                            <span className="body">
-                              <strong>{p.name}</strong>
-                              {p.match ? (
-                                <span className="addr">{p.match.address}</span>
-                              ) : (
-                                <span className="addr">위치를 찾지 못했어요</span>
-                              )}
-                              {(p.time || p.memo) && (
-                                <span className="memo">{[p.time, p.memo].filter(Boolean).join(" / ")}</span>
-                              )}
-                            </span>
-                          </button>
-                          {/* 위치를 못 찾은 장소는 바로 고칠 수 있게 편집 모드가 아니어도 보여줘요 */}
-                          {(editing || !p.match) && (
-                            <button type="button" className="btn pick-toggle" onClick={() => openPicker(key)}>
-                              {p.match ? "다른 장소" : "직접 검색"}
-                            </button>
-                          )}
-                        </div>
-
-                        {editing && (
-                          <div className="edit-row">
-                            <button
-                              type="button"
-                              className="edit-btn"
-                              title="위로 이동"
-                              disabled={i === 0}
-                              onClick={() => movePlace(d.day, i, -1)}
-                            >
-                              ▲
-                            </button>
-                            <button
-                              type="button"
-                              className="edit-btn"
-                              title="아래로 이동"
-                              disabled={i === d.places.length - 1}
-                              onClick={() => movePlace(d.day, i, 1)}
-                            >
-                              ▼
-                            </button>
-                            {trip.days.length > 1 && (
-                              <select
-                                className="day-move"
-                                value=""
-                                onChange={(e) => e.target.value && moveToDay(d.day, i, Number(e.target.value))}
-                                aria-label="다른 일차로 이동"
-                              >
-                                <option value="" disabled>
-                                  일차 이동
-                                </option>
-                                {trip.days
-                                  .filter((other) => other.day !== d.day)
-                                  .map((other) => (
-                                    <option key={other.day} value={other.day}>
-                                      {other.day}일차로
-                                    </option>
-                                  ))}
-                              </select>
-                            )}
-                            <button
-                              type="button"
-                              className="edit-btn danger"
-                              title="삭제"
-                              onClick={() => removePlace(d.day, i)}
-                            >
-                              삭제
-                            </button>
-                          </div>
-                        )}
-
-                        {pickerOpen && (
-                          <div className="picker">
-                            {p.candidates?.length > 0 && (
-                              <ul className="picker-list">
-                                {p.candidates.map((c) => (
-                                  <li key={c.kakaoId}>
-                                    <button type="button" onClick={() => applyMatch(d.day, i, c)}>
-                                      <strong>{c.name}</strong>
-                                      <span>{c.address}</span>
-                                    </button>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-
-                            <form className="picker-search" onSubmit={handleSearch}>
-                              <input
-                                type="text"
-                                placeholder="장소명으로 검색"
-                                value={searchText}
-                                onChange={(e) => setSearchText(e.target.value)}
-                              />
-                              <button type="submit" disabled={searching}>
-                                {searching ? "검색 중…" : "검색"}
-                              </button>
-                            </form>
-                            {searchError && <p className="error">{searchError}</p>}
-                            {searchResults.length > 0 && (
-                              <ul className="picker-list">
-                                {searchResults.map((c) => (
-                                  <li key={c.kakaoId}>
-                                    <button type="button" onClick={() => applyMatch(d.day, i, c)}>
-                                      <strong>{c.name}</strong>
-                                      <span>{c.address}</span>
-                                    </button>
-                                  </li>
-                                ))}
-                              </ul>
-                            )}
-                          </div>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ol>
-
-                {editing && (
-                  <button
-                    type="button"
-                    className="add-place-toggle"
-                    onClick={() => openPicker(`add-${d.day}`)}
-                  >
-                    + 장소 추가
-                  </button>
-                )}
-
-                {pickerKey === `add-${d.day}` && (
-                  <div className="picker">
-                    <form className="picker-search" onSubmit={handleSearch}>
-                      <input
-                        type="text"
-                        placeholder="장소명으로 검색"
-                        value={searchText}
-                        onChange={(e) => setSearchText(e.target.value)}
-                      />
-                      <button type="submit" disabled={searching}>
-                        {searching ? "검색 중…" : "검색"}
-                      </button>
-                    </form>
-                    {searchError && <p className="error">{searchError}</p>}
-                    {searchResults.length > 0 && (
-                      <ul className="picker-list">
-                        {searchResults.map((c) => (
-                          <li key={c.kakaoId}>
-                            <button type="button" onClick={() => addPlace(d.day, c)}>
-                              <strong>{c.name}</strong>
-                              <span>{c.address}</span>
-                            </button>
-                          </li>
-                        ))}
-                      </ul>
-                    )}
+            {visibleDays.map((d) => {
+              const legs = legsByPlaceIndex(d.places, routeLegs[d.day]);
+              // 실제 경로를 조회한 일차만 총 이동 시간을 보여줘요 (못 찾은 구간은 빼고 더함)
+              const totalSec = (routeLegs[d.day] || []).reduce((sum, leg) => sum + (leg ? leg.time : 0), 0);
+              return (
+                <div key={d.day} className="day" style={{ "--c": dayColor(d.day) }}>
+                  <div className="day-head">
+                    <h3>
+                      {d.day}일차 <span className="day-count">{d.places.length}곳</span>
+                      {totalSec > 0 && <span className="day-count"> · 이동 약 {formatDuration(totalSec)}</span>}
+                    </h3>
+                    <button
+                      type="button"
+                      className="btn route-toggle"
+                      onClick={() => loadRoute(d.day)}
+                      disabled={routeLoadingDay === d.day || d.places.filter((p) => p.match).length < 2}
+                    >
+                      {routeLoadingDay === d.day
+                        ? "경로 찾는 중…"
+                        : routeLegs[d.day]
+                        ? "다시 조회"
+                        : "실제 경로 보기"}
+                    </button>
                   </div>
-                )}
-              </div>
-            ))}
+                  {routeError[d.day] && <p className="notice">{routeError[d.day]}</p>}
+                  <ol className="stops">
+                    {d.places.map((p, i) => {
+                      const key = `${d.day}-${i}`;
+                      const pickerOpen = pickerKey === key;
+                      return (
+                        <li key={key} className={p.match ? "" : "unmatched"}>
+                          <div className="stop-row">
+                            <button
+                              type="button"
+                              className={`stop ${focusKey === key ? "active" : ""}`}
+                              onClick={() => p.match && setFocusKey(key)}
+                              disabled={!p.match}
+                            >
+                              <span className="num">{i + 1}</span>
+                              <span className="body">
+                                <strong>{p.name}</strong>
+                                {p.match ? (
+                                  <span className="addr">{p.match.address}</span>
+                                ) : (
+                                  <span className="addr">위치를 찾지 못했어요</span>
+                                )}
+                                {(p.time || p.memo) && (
+                                  <span className="memo">{[p.time, p.memo].filter(Boolean).join(" / ")}</span>
+                                )}
+                              </span>
+                            </button>
+                            {/* 위치를 못 찾은 장소는 바로 고칠 수 있게 편집 모드가 아니어도 보여줘요 */}
+                            {!readOnly && (editing || !p.match) && (
+                              <button type="button" className="btn pick-toggle" onClick={() => openPicker(key)}>
+                                {p.match ? "다른 장소" : "직접 검색"}
+                              </button>
+                            )}
+                          </div>
+  
+                          {editing && (
+                            <div className="edit-row">
+                              <button
+                                type="button"
+                                className="edit-btn"
+                                title="위로 이동"
+                                disabled={i === 0}
+                                onClick={() => movePlace(d.day, i, -1)}
+                              >
+                                ▲
+                              </button>
+                              <button
+                                type="button"
+                                className="edit-btn"
+                                title="아래로 이동"
+                                disabled={i === d.places.length - 1}
+                                onClick={() => movePlace(d.day, i, 1)}
+                              >
+                                ▼
+                              </button>
+                              {trip.days.length > 1 && (
+                                <select
+                                  className="day-move"
+                                  value=""
+                                  onChange={(e) => e.target.value && moveToDay(d.day, i, Number(e.target.value))}
+                                  aria-label="다른 일차로 이동"
+                                >
+                                  <option value="" disabled>
+                                    일차 이동
+                                  </option>
+                                  {trip.days
+                                    .filter((other) => other.day !== d.day)
+                                    .map((other) => (
+                                      <option key={other.day} value={other.day}>
+                                        {other.day}일차로
+                                      </option>
+                                    ))}
+                                </select>
+                              )}
+                              <button
+                                type="button"
+                                className="edit-btn danger"
+                                title="삭제"
+                                onClick={() => removePlace(d.day, i)}
+                              >
+                                삭제
+                              </button>
+                            </div>
+                          )}
+  
+                          {pickerOpen && (
+                            <div className="picker">
+                              {p.candidates?.length > 0 && (
+                                <ul className="picker-list">
+                                  {p.candidates.map((c) => (
+                                    <li key={c.kakaoId}>
+                                      <button type="button" onClick={() => applyMatch(d.day, i, c)}>
+                                        <strong>{c.name}</strong>
+                                        <span>{c.address}</span>
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+  
+                              <form className="picker-search" onSubmit={handleSearch}>
+                                <input
+                                  type="text"
+                                  placeholder="장소명으로 검색"
+                                  value={searchText}
+                                  onChange={(e) => setSearchText(e.target.value)}
+                                />
+                                <button type="submit" disabled={searching}>
+                                  {searching ? "검색 중…" : "검색"}
+                                </button>
+                              </form>
+                              {searchError && <p className="error">{searchError}</p>}
+                              {searchResults.length > 0 && (
+                                <ul className="picker-list">
+                                  {searchResults.map((c) => (
+                                    <li key={c.kakaoId}>
+                                      <button type="button" onClick={() => applyMatch(d.day, i, c)}>
+                                        <strong>{c.name}</strong>
+                                        <span>{c.address}</span>
+                                      </button>
+                                    </li>
+                                  ))}
+                                </ul>
+                              )}
+                            </div>
+                          )}
+
+                          {/* 다음 장소까지 이동 정보 ("실제 경로 보기"를 누른 일차만).
+                              i in legs: legs 객체에 i번 칸이 있는지 확인 (마지막 장소·위치 없는 장소는 칸이 없음) */}
+                          {i in legs && (
+                            <p className="leg">
+                              {legs[i]
+                                ? `${legs[i].mode === "walk" ? "도보" : "대중교통"} ${formatDuration(legs[i].time)} · ${formatDistance(legs[i].distance)}`
+                                : "경로를 못 찾아 직선으로 표시했어요"}
+                            </p>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ol>
+  
+                  {editing && (
+                    <button
+                      type="button"
+                      className="add-place-toggle"
+                      onClick={() => openPicker(`add-${d.day}`)}
+                    >
+                      + 장소 추가
+                    </button>
+                  )}
+  
+                  {pickerKey === `add-${d.day}` && (
+                    <div className="picker">
+                      <form className="picker-search" onSubmit={handleSearch}>
+                        <input
+                          type="text"
+                          placeholder="장소명으로 검색"
+                          value={searchText}
+                          onChange={(e) => setSearchText(e.target.value)}
+                        />
+                        <button type="submit" disabled={searching}>
+                          {searching ? "검색 중…" : "검색"}
+                        </button>
+                      </form>
+                      {searchError && <p className="error">{searchError}</p>}
+                      {searchResults.length > 0 && (
+                        <ul className="picker-list">
+                          {searchResults.map((c) => (
+                            <li key={c.kakaoId}>
+                              <button type="button" onClick={() => addPlace(d.day, c)}>
+                                <strong>{c.name}</strong>
+                                <span>{c.address}</span>
+                              </button>
+                            </li>
+                          ))}
+                        </ul>
+                      )}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </section>
         )}
       </aside>
@@ -642,12 +719,12 @@ export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolCh
         />
 
         {/* AI 상담: 지도 오른쪽 아래 버튼으로 열고, 열려 있는 동안은 버튼을 숨깁니다 */}
-        {trip && !chatOpen && (
+        {trip && !readOnly && !chatOpen && (
           <button type="button" className="chat-fab" onClick={() => setChatOpen(true)}>
             AI 상담
           </button>
         )}
-        {trip && chatOpen && chatPanel}
+        {trip && !readOnly && chatOpen && chatPanel}
       </main>
     </div>
   );

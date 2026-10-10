@@ -1,5 +1,6 @@
-// POST /api/trips  { title, region, sourceUrl, days } → { id }
-// 현재 화면의 일정을 저장하고 공유용 id를 발급합니다.
+// POST /api/trips  { title, region, sourceUrl, days, ... } → { id, editToken }
+// 현재 화면의 일정을 저장하고 공유용 id와 편집용 비밀값을 발급합니다.
+// 보기용 링크: /trip/{id}   편집용 링크: /trip/{id}?edit={editToken}
 import { saveTrip } from "@/lib/db";
 
 export const runtime = "nodejs"; // better-sqlite3는 Node 전용
@@ -16,6 +17,6 @@ export async function POST(req) {
     return Response.json({ error: "저장할 일정이 없어요." }, { status: 400 });
   }
 
-  const id = saveTrip(trip);
-  return Response.json({ id });
+  const { id, editToken } = saveTrip(trip);
+  return Response.json({ id, editToken });
 }

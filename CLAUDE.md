@@ -49,6 +49,9 @@ components/KakaoMap.js       지도, 핀(CustomOverlay), 경로선(Polyline) (�
 app/api/extract/route.js     POST /api/extract: 아래 lib 함수들을 순서대로 호출 (여행기 하나씩)
 app/api/chat/route.js        POST /api/chat { trip, pool, messages, message }: AI 일정 상담
 app/api/trips/...            일정 저장(POST)·불러오기(GET)·수정(PUT). lib/db.js(SQLite)에 JSON 통째로 저장
+                             POST가 { id, editToken }을 돌려줌. 보기용 /trip/{id}, 편집용 /trip/{id}?edit={editToken}
+                             PUT은 X-Edit-Token 헤더가 맞아야 저장. editToken은 data JSON에 넣지 않고 edit_token 칸에만 둔다
+                             (edit_token이 없는 옛 저장본은 보기 전용)
 lib/fetchContent.js          URL → 본문 텍스트 (네이버 블로그는 PostView 주소로 변환)
 lib/llm.js                   본문 → { title, region, days[] } JSON, 채팅 응답
 lib/geocode.js               장소명 → { match, candidates[] } (카카오 키워드 검색)
