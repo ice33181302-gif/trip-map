@@ -93,15 +93,15 @@ export default function SharedTripPage() {
   }
 
   const top = (
-    <header className="brand">
+    <header className="brand brand-row">
       <h1>여행기 지도</h1>
-      <a href="/" className="link">새로 만들기</a>
+      <a href="/" className="btn">새로 만들기</a>
     </header>
   );
 
   const actions = (
     <div className="save-box">
-      <button type="button" className="link" onClick={handleSave} disabled={saving}>
+      <button type="button" className="btn" onClick={handleSave} disabled={saving}>
         {saving ? "저장 중…" : saved ? "저장됨" : "수정 내용 저장"}
       </button>
       {saveError && <p className="error">{saveError}</p>}

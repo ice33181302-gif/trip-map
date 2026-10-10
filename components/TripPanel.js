@@ -1,6 +1,6 @@
 "use client";
 // 일정 목록 + 지도 + 편집 기능을 한 화면(홈, 공유 링크)에서 공통으로 씁니다.
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { dayColor } from "@/lib/colors";
 import { addMissingPlaces } from "@/lib/pool";
@@ -24,6 +24,9 @@ export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolCh
   const [chatLoading, setChatLoading] = useState(false);
   const [chatError, setChatError] = useState("");
   const [focusKey, setFocusKey] = useState(null);
+  // 편집 모드일 때만 순서 변경·일차 이동·삭제·다른 장소·장소 추가 버튼을 보여줍니다.
+  // 평소에는 장소 정보만 보여서 목록이 깔끔해요.
+  const [editing, setEditing] = useState(false);
   const [pickerKey, setPickerKey] = useState(null); // 후보 목록/검색창을 열어둔 장소 (day-index)
   const [searchText, setSearchText] = useState("");
   const [searching, setSearching] = useState(false);
@@ -32,16 +35,14 @@ export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolCh
   const [routeLegs, setRouteLegs] = useState({}); // { [day]: legs 배열 } — "실제 경로 보기" 누른 일차만 채워짐
   const [routeLoadingDay, setRouteLoadingDay] = useState(null);
   const [routeError, setRouteError] = useState({});
-  // 모바일에서는 채팅창을 버튼 바로 아래에, 데스크톱에서는 지도 오른쪽 별도 칸에 보여줍니다.
-  const [isMobile, setIsMobile] = useState(false);
+  // 채팅 대화 영역. 새 메시지가 오면 맨 아래로 스크롤하려고 DOM 요소를 기억해 둡니다.
+  // (useRef는 화면을 다시 그리지 않고 값을 보관하는 상자예요.)
+  const chatLogRef = useRef(null);
 
   useEffect(() => {
-    const mq = window.matchMedia("(max-width: 800px)");
-    const update = () => setIsMobile(mq.matches);
-    update();
-    mq.addEventListener("change", update);
-    return () => mq.removeEventListener("change", update);
-  }, []);
+    const el = chatLogRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [chatMessages, chatLoading, chatOpen]);
 
   // 그 일차에 위치가 있는 장소들을 순서대로 이어서 실제 경로를 조회
   async function loadRoute(day) {
@@ -101,6 +102,12 @@ export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolCh
   function switchView(view) {
     setMapView(view);
     setFocusKey(null);
+  }
+
+  // 편집을 끝내면 열려 있던 후보 목록/검색창도 닫습니다.
+  function toggleEditing() {
+    setEditing((v) => !v);
+    setPickerKey(null);
   }
 
   function openPicker(key) {
@@ -214,9 +221,10 @@ export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolCh
 
   // AI와 대화하며 일정을 조정합니다. id 치환은 서버(app/api/chat)에서만 하고,
   // 여기서는 받은 itinerary를 그대로 반영합니다.
-  async function sendChat(e) {
-    e.preventDefault();
-    const text = chatInput.trim();
+  // presetText: 추천 문장 버튼을 눌렀을 때 그 문장. 없으면 입력칸 내용을 보냅니다.
+  async function sendChat(e, presetText) {
+    if (e) e.preventDefault();
+    const text = (presetText || chatInput).trim();
     if (!text || chatLoading) return;
     const history = chatMessages.slice(-6); // API에는 최근 6개까지만 보냅니다
     setChatMessages((m) => [...m, { role: "user", text }]);
@@ -263,42 +271,65 @@ export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolCh
     ? trip.days.reduce((n, d) => n + d.places.filter((p) => !p.match).length, 0)
     : 0;
 
-  const chatBody = (
-    <>
+  // 대화를 시작하기 전에 보여줄 추천 문장. 내 일정이 비어 있으면 "새로 짜기", 있으면 "조정하기" 위주예요.
+  const emptyTrip = trip && trip.days.length === 0;
+  const suggestions = emptyTrip
+    ? ["1박 2일로 짜줘", "2박 3일로 짜줘", "여러 여행기에 나온 곳 위주로 짜줘"]
+    : ["둘째 날은 여유롭게 바꿔줘", "실내 위주로 바꿔줘", "동선이 짧게 다시 짜줘"];
+
+  // 데스크톱은 지도 위에 떠 있는 카드, 모바일은 아래에서 올라오는 시트예요. (모양은 CSS가 화면 폭에 따라 정함)
+  const chatPanel = (
+    <section className="chat-panel" aria-label="AI와 일정 상담하기">
       <div className="chat-panel-head">
         <h3>AI와 일정 상담하기</h3>
         <button type="button" className="chat-close" onClick={() => setChatOpen(false)} title="닫기">
           ✕
         </button>
       </div>
-      <div className="chat-log">
-        {chatMessages.length === 0 &&
-          (trip && trip.days.length === 0 ? (
-            <p className="notice">예: &quot;장소 모음으로 2박 3일 일정 짜줘&quot;처럼 말해보세요.</p>
-          ) : (
-            <p className="notice">예: &quot;둘째 날은 좀 여유롭게 바꿔줘&quot;처럼 말해보세요.</p>
-          ))}
+      <div className="chat-log" ref={chatLogRef}>
+        {chatMessages.length === 0 && (
+          <p className="notice">
+            {emptyTrip
+              ? "장소 모음에서 골라 일정을 만들어 드려요. 며칠 일정인지 알려주세요."
+              : "원하는 분위기나 조건을 말하면 일정을 바꿔 드려요."}
+          </p>
+        )}
         {chatMessages.map((m, i) => (
           <p key={i} className={`chat-msg ${m.role}`}>
             {m.text}
           </p>
         ))}
-        {chatLoading && <p className="chat-msg assistant">생각하는 중…</p>}
+        {chatLoading && (
+          <p className="chat-msg assistant typing" aria-label="답변을 만드는 중">
+            <span />
+            <span />
+            <span />
+          </p>
+        )}
       </div>
-      {chatError && <p className="error">{chatError}</p>}
+      {chatError && <p className="error chat-error">{chatError}</p>}
+      {chatMessages.length === 0 && !chatLoading && (
+        <div className="chat-suggestions">
+          {suggestions.map((s) => (
+            <button key={s} type="button" className="chat-chip" onClick={() => sendChat(null, s)}>
+              {s}
+            </button>
+          ))}
+        </div>
+      )}
       <form className="chat-form" onSubmit={sendChat}>
         <input
           type="text"
-          placeholder="예: 셋째 날은 실내 위주로 바꿔줘"
+          placeholder={emptyTrip ? "예: 2박 3일, 카페 위주로 짜줘" : "예: 셋째 날은 실내 위주로 바꿔줘"}
           value={chatInput}
           onChange={(e) => setChatInput(e.target.value)}
           disabled={chatLoading}
         />
         <button type="submit" disabled={chatLoading || !chatInput.trim()}>
-          {chatLoading ? "전송 중…" : "보내기"}
+          보내기
         </button>
       </form>
-    </>
+    </section>
   );
 
   // 지도는 일차 목록(days)을 받으니, 장소 모음은 "1일차 하나"로 감싸서 넘깁니다(선은 poolMode라 안 그림).
@@ -315,7 +346,7 @@ export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolCh
     : (!isMulti && showViewTabs && mapView === "original" ? originalTrip : trip)?.days || [];
 
   return (
-    <div className={`shell ${trip && chatOpen ? "chat-open" : ""}`}>
+    <div className="shell">
       <aside className="panel">
         {top}
 
@@ -325,62 +356,68 @@ export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolCh
               <h2>{trip.title}</h2>
               <div className="trip-head-actions">
                 {trip.sourceUrl && (
-                  <a href={trip.sourceUrl} target="_blank" rel="noreferrer">원문 보기</a>
+                  <a className="btn" href={trip.sourceUrl} target="_blank" rel="noreferrer">원문 보기</a>
                 )}
                 {actions}
               </div>
             </div>
 
-            <button type="button" className="primary chat-toggle" onClick={() => setChatOpen((v) => !v)}>
-              {chatOpen ? "AI 상담 닫기" : "AI와 일정 상담하기"}
-            </button>
-
-            {isMobile && chatOpen && <div className="chat-panel chat-panel-inline">{chatBody}</div>}
-
             {showPool && <PlacePool pool={pool} focusKey={focusKey} onFocus={setFocusKey} />}
 
             {!showPool && trip.days.length === 0 && (
               <p className="notice">
-                아직 내 일정이 없어요. &quot;AI와 일정 상담하기&quot;에서 장소 모음으로 일정을 만들어 보세요.
+                아직 내 일정이 없어요. 지도 오른쪽 아래 &quot;AI 상담&quot; 버튼을 눌러 장소 모음으로 일정을 만들어 보세요.
               </p>
             )}
 
             {!showPool && trip.days.length > 0 && (
-              <div className="tabs" role="tablist">
-                <button
-                  role="tab"
-                  aria-selected={selectedDay === "all"}
-                  className="tab"
-                  onClick={() => setSelectedDay("all")}
-                >
-                  전체
-                </button>
-                {trip.days.map((d) => (
+              <div className="list-toolbar">
+                <div className="tabs" role="tablist">
                   <button
-                    key={d.day}
                     role="tab"
-                    aria-selected={selectedDay === d.day}
+                    aria-selected={selectedDay === "all"}
                     className="tab"
-                    style={{ "--c": dayColor(d.day) }}
-                    onClick={() => setSelectedDay(d.day)}
+                    onClick={() => setSelectedDay("all")}
                   >
-                    {d.day}일차
+                    전체
                   </button>
-                ))}
+                  {trip.days.map((d) => (
+                    <button
+                      key={d.day}
+                      role="tab"
+                      aria-selected={selectedDay === d.day}
+                      className="tab"
+                      style={{ "--c": dayColor(d.day) }}
+                      onClick={() => setSelectedDay(d.day)}
+                    >
+                      {d.day}일차
+                    </button>
+                  ))}
+                </div>
+                <button
+                  type="button"
+                  className={`btn edit-toggle ${editing ? "on" : ""}`}
+                  aria-pressed={editing}
+                  onClick={toggleEditing}
+                >
+                  {editing ? "편집 완료" : "편집"}
+                </button>
               </div>
             )}
 
             {!showPool && missing > 0 && (
-              <p className="notice">위치를 찾지 못한 장소가 {missing}곳 있어요. 지도에는 빠져 있어요.</p>
+              <p className="notice-box">위치를 찾지 못한 장소가 {missing}곳 있어요. 지도에는 빠져 있어요.</p>
             )}
 
             {visibleDays.map((d) => (
               <div key={d.day} className="day" style={{ "--c": dayColor(d.day) }}>
                 <div className="day-head">
-                  <h3>{d.day}일차</h3>
+                  <h3>
+                    {d.day}일차 <span className="day-count">{d.places.length}곳</span>
+                  </h3>
                   <button
                     type="button"
-                    className="route-toggle"
+                    className="btn route-toggle"
                     onClick={() => loadRoute(d.day)}
                     disabled={routeLoadingDay === d.day || d.places.filter((p) => p.match).length < 2}
                   >
@@ -418,58 +455,63 @@ export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolCh
                               )}
                             </span>
                           </button>
-                          <button type="button" className="pick-toggle" onClick={() => openPicker(key)}>
-                            {p.match ? "다른 장소" : "직접 검색"}
-                          </button>
+                          {/* 위치를 못 찾은 장소는 바로 고칠 수 있게 편집 모드가 아니어도 보여줘요 */}
+                          {(editing || !p.match) && (
+                            <button type="button" className="btn pick-toggle" onClick={() => openPicker(key)}>
+                              {p.match ? "다른 장소" : "직접 검색"}
+                            </button>
+                          )}
                         </div>
 
-                        <div className="edit-row">
-                          <button
-                            type="button"
-                            className="edit-btn"
-                            title="위로 이동"
-                            disabled={i === 0}
-                            onClick={() => movePlace(d.day, i, -1)}
-                          >
-                            ▲
-                          </button>
-                          <button
-                            type="button"
-                            className="edit-btn"
-                            title="아래로 이동"
-                            disabled={i === d.places.length - 1}
-                            onClick={() => movePlace(d.day, i, 1)}
-                          >
-                            ▼
-                          </button>
-                          {trip.days.length > 1 && (
-                            <select
-                              className="day-move"
-                              value=""
-                              onChange={(e) => e.target.value && moveToDay(d.day, i, Number(e.target.value))}
-                              aria-label="다른 일차로 이동"
+                        {editing && (
+                          <div className="edit-row">
+                            <button
+                              type="button"
+                              className="edit-btn"
+                              title="위로 이동"
+                              disabled={i === 0}
+                              onClick={() => movePlace(d.day, i, -1)}
                             >
-                              <option value="" disabled>
-                                일차 이동
-                              </option>
-                              {trip.days
-                                .filter((other) => other.day !== d.day)
-                                .map((other) => (
-                                  <option key={other.day} value={other.day}>
-                                    {other.day}일차로
-                                  </option>
-                                ))}
-                            </select>
-                          )}
-                          <button
-                            type="button"
-                            className="edit-btn danger"
-                            title="삭제"
-                            onClick={() => removePlace(d.day, i)}
-                          >
-                            삭제
-                          </button>
-                        </div>
+                              ▲
+                            </button>
+                            <button
+                              type="button"
+                              className="edit-btn"
+                              title="아래로 이동"
+                              disabled={i === d.places.length - 1}
+                              onClick={() => movePlace(d.day, i, 1)}
+                            >
+                              ▼
+                            </button>
+                            {trip.days.length > 1 && (
+                              <select
+                                className="day-move"
+                                value=""
+                                onChange={(e) => e.target.value && moveToDay(d.day, i, Number(e.target.value))}
+                                aria-label="다른 일차로 이동"
+                              >
+                                <option value="" disabled>
+                                  일차 이동
+                                </option>
+                                {trip.days
+                                  .filter((other) => other.day !== d.day)
+                                  .map((other) => (
+                                    <option key={other.day} value={other.day}>
+                                      {other.day}일차로
+                                    </option>
+                                  ))}
+                              </select>
+                            )}
+                            <button
+                              type="button"
+                              className="edit-btn danger"
+                              title="삭제"
+                              onClick={() => removePlace(d.day, i)}
+                            >
+                              삭제
+                            </button>
+                          </div>
+                        )}
 
                         {pickerOpen && (
                           <div className="picker">
@@ -517,13 +559,15 @@ export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolCh
                   })}
                 </ol>
 
-                <button
-                  type="button"
-                  className="add-place-toggle"
-                  onClick={() => openPicker(`add-${d.day}`)}
-                >
-                  + 장소 추가
-                </button>
+                {editing && (
+                  <button
+                    type="button"
+                    className="add-place-toggle"
+                    onClick={() => openPicker(`add-${d.day}`)}
+                  >
+                    + 장소 추가
+                  </button>
+                )}
 
                 {pickerKey === `add-${d.day}` && (
                   <div className="picker">
@@ -596,9 +640,15 @@ export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolCh
           routeLegs={routeLegs}
           poolMode={showPool}
         />
-      </main>
 
-      {trip && chatOpen && !isMobile && <aside className="chat-panel">{chatBody}</aside>}
+        {/* AI 상담: 지도 오른쪽 아래 버튼으로 열고, 열려 있는 동안은 버튼을 숨깁니다 */}
+        {trip && !chatOpen && (
+          <button type="button" className="chat-fab" onClick={() => setChatOpen(true)}>
+            AI 상담
+          </button>
+        )}
+        {trip && chatOpen && chatPanel}
+      </main>
     </div>
   );
 }

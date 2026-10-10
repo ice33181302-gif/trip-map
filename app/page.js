@@ -245,7 +245,7 @@ export default function Home() {
 
   const actions = (
     <div className="save-box">
-      <button type="button" className="link" onClick={handleSave} disabled={saving}>
+      <button type="button" className="btn" onClick={handleSave} disabled={saving}>
         {saving ? "저장 중…" : "저장하고 공유 링크 만들기"}
       </button>
       {shareUrl && (
