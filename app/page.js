@@ -1,15 +1,37 @@
 "use client";
 import { useState } from "react";
 import TripPanel from "@/components/TripPanel";
+import { buildPool } from "@/lib/pool";
+
+const MAX_LINKS = 3;
+
+// 여행기 하나를 /api/extract로 읽어옵니다. 성공하면 { data }, 실패하면 { error, needText }를 돌려줘요.
+async function extractOne(url, text) {
+  try {
+    const res = await fetch("/api/extract", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ url, text }),
+    });
+    const data = await res.json();
+    if (!res.ok) return { error: data.error || "처리하지 못했어요.", needText: Boolean(data.needText) };
+    return { data };
+  } catch {
+    return { error: "서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요." };
+  }
+}
 
 export default function Home() {
-  const [url, setUrl] = useState("");
+  const [urls, setUrls] = useState([""]); // 링크 입력칸들 (최대 MAX_LINKS개)
   const [text, setText] = useState("");
   const [showText, setShowText] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [progress, setProgress] = useState(""); // 여러 링크를 읽을 때 "2/3 여행기 읽는 중…"
   const [error, setError] = useState("");
+  const [failures, setFailures] = useState([]); // 읽지 못한 링크 [{ index, error, needText }]
   const [trip, setTrip] = useState(null);
-  const [originalTrip, setOriginalTrip] = useState(null); // 변환 직후 스냅샷. AI 채팅이 고를 수 있는 장소 범위이자, "원본 일정" 지도 보기용
+  const [originalTrip, setOriginalTrip] = useState(null); // 여행기가 하나일 때 변환 직후 스냅샷. "원본 일정" 지도 보기용
+  const [pool, setPool] = useState(null); // 장소 모음 (lib/pool.js). AI 채팅이 고를 수 있는 장소 범위
   const [saving, setSaving] = useState(false);
   const [shareUrl, setShareUrl] = useState("");
   const [saveError, setSaveError] = useState("");
@@ -19,49 +41,103 @@ export default function Home() {
 
   // 입력값과 지금까지 만든 결과를 모두 지우고 처음 상태로 되돌립니다.
   function handleClear() {
-    setUrl("");
+    setUrls([""]);
     setText("");
     setShowText(false);
     setError("");
+    setFailures([]);
     setTrip(null);
     setOriginalTrip(null);
+    setPool(null);
     setShareUrl("");
     setSaveError("");
     setTripVersion((v) => v + 1);
   }
 
+  function changeUrl(index, value) {
+    setUrls((list) => list.map((u, i) => (i === index ? value : u)));
+  }
+
+  function addUrl() {
+    setUrls((list) => (list.length < MAX_LINKS ? [...list, ""] : list));
+  }
+
+  function removeUrl(index) {
+    setUrls((list) => list.filter((_, i) => i !== index));
+  }
+
+  // 여행기 하나로 만든 결과를 화면에 반영 (기존 동작과 같음)
+  function showSingle(data) {
+    setTrip(data);
+    setOriginalTrip(data);
+    setPool(buildPool([data]));
+    setShareUrl("");
+    setTripVersion((v) => v + 1);
+  }
+
   async function handleSubmit(e) {
     e.preventDefault();
-    if (!url.trim() && !text.trim()) {
+    const links = urls.map((u) => u.trim()).filter(Boolean);
+    const pasted = showText ? text : "";
+    if (links.length === 0 && !pasted.trim()) {
       setError("여행기 주소를 넣거나 글 내용을 붙여넣어 주세요.");
       return;
     }
     setLoading(true);
     setError("");
-    try {
-      const res = await fetch("/api/extract", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, text: showText ? text : "" }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setError(data.error || "처리하지 못했어요.");
-        if (data.needText) setShowText(true); // 가져오기 실패 → 붙여넣기 칸 열기
-        return;
+    setFailures([]);
+
+    // 링크가 하나(또는 붙여넣기만)면 지금까지와 똑같이 처리합니다.
+    if (links.length <= 1) {
+      const result = await extractOne(links[0] || "", pasted);
+      if (result.error) {
+        setError(result.error);
+        if (result.needText) setShowText(true); // 가져오기 실패 → 붙여넣기 칸 열기
+      } else {
+        showSingle(result.data);
       }
-      setTrip(data);
-      setOriginalTrip(data);
-      setShareUrl("");
-      setTripVersion((v) => v + 1);
-    } catch {
-      setError("서버에 연결하지 못했어요. 잠시 후 다시 시도해 주세요.");
-    } finally {
       setLoading(false);
+      return;
     }
+
+    // 여러 링크: Gemini 무료 한도(분당 요청 수) 때문에 동시에 보내지 않고 하나씩 순서대로 읽어요.
+    const results = [];
+    const failed = [];
+    for (let i = 0; i < links.length; i++) {
+      setProgress(`${i + 1}/${links.length} 여행기 읽는 중…`);
+      // await를 for 문 안에서 쓰면 앞의 요청이 끝나야 다음 요청을 보냅니다.
+      const result = await extractOne(links[i], "");
+      if (result.error) failed.push({ index: i + 1, error: result.error, needText: result.needText });
+      else results.push(result.data);
+    }
+    setProgress("");
+    setLoading(false);
+    setFailures(failed);
+
+    if (results.length === 0) {
+      setError("링크를 하나도 읽지 못했어요.");
+      return;
+    }
+    if (results.length === 1) {
+      showSingle(results[0]); // 하나만 성공했으면 링크 하나 넣었을 때와 똑같이 보여줘요
+      return;
+    }
+
+    // 2개 이상 성공: 장소 모음을 만들고, 내 일정은 AI 상담으로 만들도록 비워 둡니다.
+    const newPool = buildPool(results);
+    setPool(newPool);
+    setOriginalTrip(null);
+    setTrip({
+      title: `여행기 ${results.length}개 모음`,
+      region: newPool.sources[0].region,
+      sourceUrl: null,
+      days: [],
+    });
+    setShareUrl("");
+    setTripVersion((v) => v + 1);
   }
 
-  // 지금 화면의 일정을 저장하고, 다른 사람과 나눌 수 있는 링크를 만듭니다.
+  // 지금 화면의 일정과 장소 모음을 저장하고, 다른 사람과 나눌 수 있는 링크를 만듭니다.
   async function handleSave() {
     setSaving(true);
     setSaveError("");
@@ -69,7 +145,7 @@ export default function Home() {
       const res = await fetch("/api/trips", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...trip, originalDays: (originalTrip || trip).days }),
+        body: JSON.stringify({ ...trip, originalDays: (originalTrip || trip).days, pool }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -84,6 +160,8 @@ export default function Home() {
     }
   }
 
+  const hasInput = urls.some((u) => u) || text;
+
   const top = (
     <>
       <header className="brand">
@@ -92,22 +170,36 @@ export default function Home() {
       </header>
 
       <form className="form" onSubmit={handleSubmit}>
-        <label htmlFor="url" className="sr-only">여행기 주소</label>
-        <div className="url-row">
-          <input
-            id="url"
-            type="url"
-            inputMode="url"
-            placeholder="https://blog.naver.com/..."
-            value={url}
-            onChange={(e) => setUrl(e.target.value)}
-          />
-          {(url || text || trip) && (
-            <button type="button" className="clear-btn" onClick={handleClear} title="입력값과 결과 지우기">
-              지우기
-            </button>
-          )}
-        </div>
+        {urls.map((u, i) => (
+          <div className="url-row" key={i}>
+            <label htmlFor={`url-${i}`} className="sr-only">여행기 주소 {i + 1}</label>
+            <input
+              id={`url-${i}`}
+              type="url"
+              inputMode="url"
+              placeholder="https://blog.naver.com/..."
+              value={u}
+              onChange={(e) => changeUrl(i, e.target.value)}
+            />
+            {i > 0 && (
+              <button type="button" className="clear-btn" onClick={() => removeUrl(i)} title="이 링크 빼기">
+                ✕
+              </button>
+            )}
+            {i === 0 && (hasInput || trip) && (
+              <button type="button" className="clear-btn" onClick={handleClear} title="입력값과 결과 지우기">
+                지우기
+              </button>
+            )}
+          </div>
+        ))}
+
+        {/* 붙여넣기는 링크 하나일 때만 써요. 붙여넣기 칸이 열려 있으면 링크를 더 추가할 수 없어요. */}
+        {urls.length < MAX_LINKS && !showText && (
+          <button type="button" className="link add-link" onClick={addUrl}>
+            + 링크 추가
+          </button>
+        )}
 
         {showText && (
           <>
@@ -124,14 +216,29 @@ export default function Home() {
 
         <div className="form-row">
           <button type="submit" className="primary" disabled={loading}>
-            {loading ? "일정 읽는 중…" : "지도로 만들기"}
+            {loading ? progress || "일정 읽는 중…" : "지도로 만들기"}
           </button>
-          <button type="button" className="link" onClick={() => setShowText((v) => !v)}>
-            {showText ? "붙여넣기 닫기" : "글 내용 직접 붙여넣기"}
-          </button>
+          {urls.length === 1 && (
+            <button type="button" className="link" onClick={() => setShowText((v) => !v)}>
+              {showText ? "붙여넣기 닫기" : "글 내용 직접 붙여넣기"}
+            </button>
+          )}
         </div>
 
         {error && <p className="error" role="alert">{error}</p>}
+        {failures.length > 0 && (
+          <div className="failures" role="alert">
+            <p>읽지 못한 링크가 있어서 건너뛰었어요.</p>
+            <ul>
+              {failures.map((f) => (
+                <li key={f.index}>
+                  {f.index}번째 링크: {f.error}
+                  {f.needText && " 이 링크만 따로 넣고 글 내용을 붙여넣어 보세요."}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </form>
     </>
   );
@@ -155,7 +262,9 @@ export default function Home() {
       key={tripVersion}
       trip={trip}
       originalTrip={originalTrip}
+      pool={pool}
       onChange={setTrip}
+      onPoolChange={setPool}
       top={top}
       actions={trip && actions}
     />

@@ -71,6 +71,26 @@ button, input, textarea { font: inherit; color: inherit; }
   text-decoration: underline; text-underline-offset: 3px; cursor: pointer;
 }
 .error { margin: 0; color: var(--danger); font-size: 14px; }
+.add-link { justify-self: start; font-size: 14px; }
+.failures { font-size: 13px; color: var(--danger); }
+.failures p { margin: 0; }
+.failures ul { margin: 4px 0 0; padding-left: 18px; }
+
+/* 장소 모음: 여행기별 색 범례와 목록 (방문 순서가 없으니 세로 선은 숨김) */
+.pool { margin-top: 16px; }
+.pool-sources { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.pool-sources li { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.pool-sources a { color: var(--muted); font-size: 13px; white-space: nowrap; }
+.pool-dot { flex: none; width: 12px; height: 12px; border-radius: 50%; background: var(--c); }
+.pool-source-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notice.warn { color: #9a5b00; }
+.pool-stops { margin-top: 10px; }
+.pool-stops::before { display: none; }
+.pool-badge {
+  display: inline-block; margin-left: 6px; padding: 0 7px; border-radius: 999px;
+  background: var(--c); color: #fff; font-size: 11px; font-weight: 500; vertical-align: 2px;
+}
+.pool-badge.plain { background: var(--land); color: var(--muted); }
 
 /* 결과 */
 .trip { margin-top: 30px; border-top: 1px solid var(--line); padding-top: 22px; }

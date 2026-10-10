@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 import TripPanel from "@/components/TripPanel";
+import { addMissingPlaces, buildPool } from "@/lib/pool";
 
 // 옛날에 저장된 일정은 장소에 id가 없을 수 있어서, 불러올 때 채워 넣습니다.
 function withIds(days) {
@@ -16,6 +17,7 @@ export default function SharedTripPage() {
   const { id } = useParams();
   const [trip, setTrip] = useState(null);
   const [originalTrip, setOriginalTrip] = useState(null);
+  const [pool, setPool] = useState(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState("");
   const [saving, setSaving] = useState(false);
@@ -30,11 +32,15 @@ export default function SharedTripPage() {
           setLoadError(data.error || "불러오지 못했어요.");
           return;
         }
-        const { originalDays, ...tripData } = data;
+        const { originalDays, pool: savedPool, ...tripData } = data;
         const days = withIds(tripData.days);
         setTrip({ ...tripData, days });
         // originalDays가 없는 옛날 저장본은 현재 일정을 원본으로 취급합니다(비교 탭은 안 보임).
-        setOriginalTrip({ ...tripData, days: withIds(originalDays || tripData.days) });
+        const original = { ...tripData, days: withIds(originalDays || tripData.days) };
+        setOriginalTrip(original);
+        // 장소 모음이 없는 옛날 저장본은 원본 일정으로 모음을 만들고,
+        // 그 뒤에 추가했던 장소도 모음에 넣어 AI 상담에서 쓸 수 있게 합니다.
+        setPool(addMissingPlaces(savedPool || buildPool([original]), days));
       })
       .catch(() => setLoadError("서버에 연결하지 못했어요."))
       .finally(() => setLoading(false));
@@ -48,7 +54,7 @@ export default function SharedTripPage() {
       const res = await fetch(`/api/trips/${id}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ...trip, originalDays: (originalTrip || trip).days }),
+        body: JSON.stringify({ ...trip, originalDays: (originalTrip || trip).days, pool }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -106,7 +112,9 @@ export default function SharedTripPage() {
     <TripPanel
       trip={trip}
       originalTrip={originalTrip}
+      pool={pool}
       onChange={setTrip}
+      onPoolChange={setPool}
       top={top}
       actions={actions}
     />

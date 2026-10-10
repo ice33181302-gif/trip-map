@@ -41,14 +41,37 @@ curl -X POST http://localhost:3000/api/extract \
 ## 구조와 데이터 흐름
 
 ```
-app/page.js                  화면: URL 입력, 붙여넣기, 일차 탭, 장소 목록 (클라이언트)
+app/page.js                  화면: 링크 입력(최대 3개), 붙여넣기, 여러 링크를 순서대로 추출 (클라이언트)
+app/trip/[id]/page.js        공유 링크 화면: 저장된 일정·장소 모음 불러오기, 수정 후 다시 저장
+components/TripPanel.js      일정 목록·편집·AI 채팅·지도 보기 전환 (홈과 공유 화면이 공유)
+components/PlacePool.js      장소 모음 목록 (여행기별 색 범례, "N개 여행기에 나옴" 표시)
 components/KakaoMap.js       지도, 핀(CustomOverlay), 경로선(Polyline) (클라이언트 전용)
-app/api/extract/route.js     POST /api/extract: 아래 lib 함수들을 순서대로 호출
+app/api/extract/route.js     POST /api/extract: 아래 lib 함수들을 순서대로 호출 (여행기 하나씩)
+app/api/chat/route.js        POST /api/chat { trip, pool, messages, message }: AI 일정 상담
+app/api/trips/...            일정 저장(POST)·불러오기(GET)·수정(PUT). lib/db.js(SQLite)에 JSON 통째로 저장
 lib/fetchContent.js          URL → 본문 텍스트 (네이버 블로그는 PostView 주소로 변환)
-lib/llm.js                   본문 → { title, region, days[] } JSON
+lib/llm.js                   본문 → { title, region, days[] } JSON, 채팅 응답
 lib/geocode.js               장소명 → { match, candidates[] } (카카오 키워드 검색)
-lib/colors.js                일차별 색상 (지도와 목록이 공유)
+lib/pool.js                  여러 여행기 → 장소 모음 (화면과 서버가 공유)
+lib/colors.js                일차별 색상, 여행기별 색상 (지도와 목록이 공유)
 ```
+
+### 장소 모음 (pool)
+
+여행기 장소를 한 목록으로 합친 것으로, AI 채팅이 고를 수 있는 장소 범위다. 링크가 하나여도 만든다.
+
+```js
+pool = {
+  sources: [{ title, region, sourceUrl }],                 // 입력한 순서
+  places: [{ ...장소 필드, sources: [{ source, day }] }]   // source = 여행기 번호(0부터)
+}
+```
+
+- 다른 여행기에 같은 `match.kakaoId`가 나오면 한 장소로 합친다. 같은 여행기 안의 재방문은 합치지 않는다(합치면 그 id가 모음에서 빠져 채팅에서 버려진다).
+- `sources: []`는 사용자가 직접 추가했거나 AI가 추천한 장소다. 일정 변경은 TripPanel의 `changeTrip`을 거쳐야 새 장소가 모음에 같이 들어간다.
+- `/api/chat`은 모음에 없는 id를 버린다. 장소 객체는 현재 일정에서 먼저 찾는다(사용자가 고친 위치 유지).
+- 링크 2개 이상 성공: 내 일정은 `days: []`로 시작하고, 지도 탭은 "내 일정 / 장소 모음"이다. 1개만 성공하면 기존 단일 여행기 화면("내 일정 / 원본 일정")과 같다.
+- 저장 데이터: `{ ...trip, originalDays, pool }`. `pool`이 없는 옛 저장본은 `originalDays`로 모음을 만든다.
 
 `/api/extract` 응답 형태:
 

@@ -1,7 +1,7 @@
 "use client";
 // 카카오맵은 브라우저에서만 동작하므로 이 컴포넌트는 클라이언트 전용입니다.
 import { useEffect, useRef } from "react";
-import { dayColor } from "@/lib/colors";
+import { dayColor, sourceColor } from "@/lib/colors";
 
 // SDK 스크립트를 한 번만 불러오도록 Promise를 공유합니다.
 let sdkPromise = null;
@@ -25,7 +25,15 @@ function loadKakaoSdk() {
   return sdkPromise;
 }
 
-export default function KakaoMap({ days = [], selectedDay = "all", focusKey = null, onSelect, routeLegs = {} }) {
+// poolMode: "장소 모음" 보기. 핀 색을 여행기별로 하고, 방문 순서가 없으니 선을 그리지 않아요.
+export default function KakaoMap({
+  days = [],
+  selectedDay = "all",
+  focusKey = null,
+  onSelect,
+  routeLegs = {},
+  poolMode = false,
+}) {
   const containerRef = useRef(null);
   const mapRef = useRef(null);
   const drawnRef = useRef([]); // 지도에 올린 마커·선 (다시 그릴 때 지우기용)
@@ -156,13 +164,13 @@ export default function KakaoMap({ days = [], selectedDay = "all", focusKey = nu
           bounds.extend(position);
           count++;
 
-          // 번호가 적힌 원형 핀 (일차 색상)
+          // 번호가 적힌 원형 핀 (일차 색상, 모음 보기에서는 처음 나온 여행기 색상)
           const el = document.createElement("button");
           el.type = "button";
           el.className = "pin";
-          el.style.setProperty("--c", color);
+          el.style.setProperty("--c", poolMode ? sourceColor(p.sources?.[0]?.source) : color);
           el.textContent = String(i + 1);
-          el.title = `${d.day}일차 ${i + 1}. ${p.name}`;
+          el.title = poolMode ? `${i + 1}. ${p.name}` : `${d.day}일차 ${i + 1}. ${p.name}`;
           if (key === focusRef.current) el.classList.add("active");
           el.addEventListener("click", () => {
             onSelectRef.current?.(key);
@@ -174,6 +182,8 @@ export default function KakaoMap({ days = [], selectedDay = "all", focusKey = nu
           drawnRef.current.push(overlay);
           pinsRef.current.set(key, { el, position });
         });
+
+        if (poolMode) return;
 
         // 방문 순서대로 구간마다 선을 그립니다.
         // "실제 경로 보기"로 받아온 구간은 그 좌표를, 아직 없거나 실패한 구간은 직선을 씁니다.
@@ -205,7 +215,7 @@ export default function KakaoMap({ days = [], selectedDay = "all", focusKey = nu
     return () => {
       cancelled = true;
     };
-  }, [days, selectedDay, routeLegs]);
+  }, [days, selectedDay, routeLegs, poolMode]);
 
   // 3) 목록에서 장소를 고르면 그 위치로 이동하고 핀 강조
   useEffect(() => {

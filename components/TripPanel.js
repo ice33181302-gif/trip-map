@@ -1,17 +1,23 @@
 "use client";
 // 일정 목록 + 지도 + 편집 기능을 한 화면(홈, 공유 링크)에서 공통으로 씁니다.
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { dayColor } from "@/lib/colors";
+import { addMissingPlaces } from "@/lib/pool";
+import PlacePool from "@/components/PlacePool";
 
 const KakaoMap = dynamic(() => import("@/components/KakaoMap"), { ssr: false });
 
 // top: 패널 맨 위에 넣을 내용 (홈은 주소 입력 폼, 공유 화면은 안내 문구 등)
 // actions: 일정 제목 옆에 넣을 버튼 (저장하기 등)
-// originalTrip: 변환 직후 원본 스냅샷. "원본 일정" 지도 보기와 AI 채팅이 고를 수 있는 장소 범위로 씀
-export default function TripPanel({ trip, originalTrip, onChange, top, actions }) {
+// originalTrip: 변환 직후 원본 스냅샷. 여행기가 하나일 때 "원본 일정" 지도 보기에 씀
+// pool: 장소 모음 (lib/pool.js). AI 채팅이 고를 수 있는 장소 범위이고, 여행기가 여러 개면 "장소 모음" 보기에 씀
+export default function TripPanel({ trip, originalTrip, pool, onChange, onPoolChange, top, actions }) {
+  const isMulti = Boolean(pool && pool.sources.length > 1); // 여행기 여러 개를 합친 경우
   const [selectedDay, setSelectedDay] = useState("all");
-  const [mapView, setMapView] = useState("current"); // "current" | "original" — 지도에 어느 일정을 보여줄지
+  // "current" | "original" | "pool" — 어느 보기를 보여줄지.
+  // 여러 여행기를 막 읽어서 내 일정이 비어 있으면 장소 모음부터 보여줍니다.
+  const [mapView, setMapView] = useState(isMulti && trip && trip.days.length === 0 ? "pool" : "current");
   const [chatOpen, setChatOpen] = useState(false); // 버튼을 눌러야 채팅 패널이 나타남
   const [chatMessages, setChatMessages] = useState([]);
   const [chatInput, setChatInput] = useState("");
@@ -81,6 +87,22 @@ export default function TripPanel({ trip, originalTrip, onChange, top, actions }
     setRouteError((prev) => ({ ...prev, [day]: "" }));
   }
 
+  // 일정을 바꿀 때는 항상 이 함수를 거칩니다.
+  // 내 일정에 새로 들어온 장소(직접 검색, AI 추천)를 장소 모음에도 넣어서,
+  // 다음 AI 상담 때 "모음에 없는 id"로 버려지지 않게 합니다.
+  function changeTrip(next) {
+    onChange(next);
+    if (!pool || !onPoolChange) return;
+    const nextPool = addMissingPlaces(pool, next.days);
+    if (nextPool !== pool) onPoolChange(nextPool);
+  }
+
+  // 보기를 바꾸면 핀 key 형태가 달라지니 강조는 초기화합니다.
+  function switchView(view) {
+    setMapView(view);
+    setFocusKey(null);
+  }
+
   function openPicker(key) {
     setPickerKey((k) => (k === key ? null : key)); // 같은 걸 다시 누르면 닫기
     setSearchText("");
@@ -95,7 +117,7 @@ export default function TripPanel({ trip, originalTrip, onChange, top, actions }
       const places = d.places.map((p, pi) => (pi !== placeIndex ? p : { ...p, match: candidate }));
       return { ...d, places };
     });
-    onChange({ ...trip, days });
+    changeTrip({ ...trip, days });
     setPickerKey(null);
     clearRoute(day);
   }
@@ -104,7 +126,7 @@ export default function TripPanel({ trip, originalTrip, onChange, top, actions }
     const days = trip.days.map((d) =>
       d.day !== day ? d : { ...d, places: d.places.filter((_, i) => i !== index) }
     );
-    onChange({ ...trip, days });
+    changeTrip({ ...trip, days });
     setFocusKey(null);
     clearRoute(day);
   }
@@ -119,7 +141,7 @@ export default function TripPanel({ trip, originalTrip, onChange, top, actions }
       [places[index], places[target]] = [places[target], places[index]];
       return { ...d, places };
     });
-    onChange({ ...trip, days });
+    changeTrip({ ...trip, days });
     setFocusKey(null); // 순서가 바뀌면 인덱스 기반 key가 달라지니 강조는 초기화
     clearRoute(day);
   }
@@ -133,7 +155,7 @@ export default function TripPanel({ trip, originalTrip, onChange, top, actions }
       if (d.day === targetDay) return { ...d, places: [...d.places, place] };
       return d;
     });
-    onChange({ ...trip, days });
+    changeTrip({ ...trip, days });
     setFocusKey(null);
     clearRoute(day);
     clearRoute(targetDay);
@@ -160,7 +182,7 @@ export default function TripPanel({ trip, originalTrip, onChange, top, actions }
             ],
           }
     );
-    onChange({ ...trip, days });
+    changeTrip({ ...trip, days });
     setPickerKey(null);
     clearRoute(day);
   }
@@ -205,7 +227,7 @@ export default function TripPanel({ trip, originalTrip, onChange, top, actions }
       const res = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ trip, originalTrip: originalTrip || trip, messages: history, message: text }),
+        body: JSON.stringify({ trip, pool, messages: history, message: text }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -222,7 +244,9 @@ export default function TripPanel({ trip, originalTrip, onChange, top, actions }
           const newIds = (newDays.find((d) => d.day === day)?.places || []).map((p) => p.id).join(",");
           if (oldIds !== newIds) clearRoute(day);
         });
-        onChange({ ...trip, days: newDays });
+        changeTrip({ ...trip, days: newDays });
+        // 장소 모음을 보고 있었다면, 새로 만든 내 일정을 바로 보여줍니다(핀 색은 일차별).
+        if (mapView === "pool") switchView("current");
       }
     } catch {
       setChatError("서버에 연결하지 못했어요.");
@@ -231,7 +255,8 @@ export default function TripPanel({ trip, originalTrip, onChange, top, actions }
     }
   }
 
-  const visibleDays = trip
+  // 장소 모음 보기에서는 일차 목록 대신 PlacePool을 보여주니 비워 둡니다.
+  const visibleDays = trip && !(isMulti && mapView === "pool")
     ? trip.days.filter((d) => selectedDay === "all" || d.day === selectedDay)
     : [];
   const missing = trip
@@ -247,9 +272,12 @@ export default function TripPanel({ trip, originalTrip, onChange, top, actions }
         </button>
       </div>
       <div className="chat-log">
-        {chatMessages.length === 0 && (
-          <p className="notice">예: &quot;둘째 날은 좀 여유롭게 바꿔줘&quot;처럼 말해보세요.</p>
-        )}
+        {chatMessages.length === 0 &&
+          (trip && trip.days.length === 0 ? (
+            <p className="notice">예: &quot;장소 모음으로 2박 3일 일정 짜줘&quot;처럼 말해보세요.</p>
+          ) : (
+            <p className="notice">예: &quot;둘째 날은 좀 여유롭게 바꿔줘&quot;처럼 말해보세요.</p>
+          ))}
         {chatMessages.map((m, i) => (
           <p key={i} className={`chat-msg ${m.role}`}>
             {m.text}
@@ -273,10 +301,18 @@ export default function TripPanel({ trip, originalTrip, onChange, top, actions }
     </>
   );
 
-  // 원본과 내용이 같으면(아직 아무것도 안 바꿨으면) 비교 탭은 보여줄 필요가 없어요.
+  // 지도는 일차 목록(days)을 받으니, 장소 모음은 "1일차 하나"로 감싸서 넘깁니다(선은 poolMode라 안 그림).
+  // useMemo: pool이 바뀔 때만 새 배열을 만들어요. 매번 새로 만들면 지도가 렌더링마다 핀을 다시 그려요.
+  const poolDays = useMemo(() => (pool ? [{ day: 1, places: pool.places }] : []), [pool]);
+  const showPool = isMulti && mapView === "pool";
+
+  // 여행기가 여러 개면 "내 일정 / 장소 모음" 탭을 항상 보여줍니다.
+  // 하나면 기존처럼 원본과 내용이 다를 때만(뭔가 바꿨을 때만) "내 일정 / 원본 일정" 탭을 보여줘요.
   const showViewTabs =
-    trip && originalTrip && JSON.stringify(originalTrip.days) !== JSON.stringify(trip.days);
-  const mapDays = (showViewTabs && mapView === "original" ? originalTrip : trip)?.days || [];
+    isMulti || (trip && originalTrip && JSON.stringify(originalTrip.days) !== JSON.stringify(trip.days));
+  const mapDays = showPool
+    ? poolDays
+    : (!isMulti && showViewTabs && mapView === "original" ? originalTrip : trip)?.days || [];
 
   return (
     <div className={`shell ${trip && chatOpen ? "chat-open" : ""}`}>
@@ -301,30 +337,40 @@ export default function TripPanel({ trip, originalTrip, onChange, top, actions }
 
             {isMobile && chatOpen && <div className="chat-panel chat-panel-inline">{chatBody}</div>}
 
-            <div className="tabs" role="tablist">
-              <button
-                role="tab"
-                aria-selected={selectedDay === "all"}
-                className="tab"
-                onClick={() => setSelectedDay("all")}
-              >
-                전체
-              </button>
-              {trip.days.map((d) => (
-                <button
-                  key={d.day}
-                  role="tab"
-                  aria-selected={selectedDay === d.day}
-                  className="tab"
-                  style={{ "--c": dayColor(d.day) }}
-                  onClick={() => setSelectedDay(d.day)}
-                >
-                  {d.day}일차
-                </button>
-              ))}
-            </div>
+            {showPool && <PlacePool pool={pool} focusKey={focusKey} onFocus={setFocusKey} />}
 
-            {missing > 0 && (
+            {!showPool && trip.days.length === 0 && (
+              <p className="notice">
+                아직 내 일정이 없어요. &quot;AI와 일정 상담하기&quot;에서 장소 모음으로 일정을 만들어 보세요.
+              </p>
+            )}
+
+            {!showPool && trip.days.length > 0 && (
+              <div className="tabs" role="tablist">
+                <button
+                  role="tab"
+                  aria-selected={selectedDay === "all"}
+                  className="tab"
+                  onClick={() => setSelectedDay("all")}
+                >
+                  전체
+                </button>
+                {trip.days.map((d) => (
+                  <button
+                    key={d.day}
+                    role="tab"
+                    aria-selected={selectedDay === d.day}
+                    className="tab"
+                    style={{ "--c": dayColor(d.day) }}
+                    onClick={() => setSelectedDay(d.day)}
+                  >
+                    {d.day}일차
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {!showPool && missing > 0 && (
               <p className="notice">위치를 찾지 못한 장소가 {missing}곳 있어요. 지도에는 빠져 있어요.</p>
             )}
 
@@ -519,25 +565,36 @@ export default function TripPanel({ trip, originalTrip, onChange, top, actions }
             <button
               type="button"
               className={`view-tab ${mapView === "current" ? "active" : ""}`}
-              onClick={() => setMapView("current")}
+              onClick={() => (isMulti ? switchView("current") : setMapView("current"))}
             >
               내 일정
             </button>
-            <button
-              type="button"
-              className={`view-tab ${mapView === "original" ? "active" : ""}`}
-              onClick={() => setMapView("original")}
-            >
-              원본 일정
-            </button>
+            {isMulti ? (
+              <button
+                type="button"
+                className={`view-tab ${mapView === "pool" ? "active" : ""}`}
+                onClick={() => switchView("pool")}
+              >
+                장소 모음
+              </button>
+            ) : (
+              <button
+                type="button"
+                className={`view-tab ${mapView === "original" ? "active" : ""}`}
+                onClick={() => setMapView("original")}
+              >
+                원본 일정
+              </button>
+            )}
           </div>
         )}
         <KakaoMap
           days={mapDays}
-          selectedDay={selectedDay}
+          selectedDay={showPool ? "all" : selectedDay}
           focusKey={focusKey}
           onSelect={setFocusKey}
           routeLegs={routeLegs}
+          poolMode={showPool}
         />
       </main>
 
